@@ -1,0 +1,16 @@
+[package]
+name = "kumiko-ui"
+description = "UI host: workbench, layout, panels, palette, themes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kumiko-core.workspace = true
+kumiko-types.workspace = true

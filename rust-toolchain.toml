@@ -1,0 +1,5 @@
+# MSRV and the toolchain used by CI. Bump deliberately, together with `rust-version` in Cargo.toml.
+[toolchain]
+channel = "1.98.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

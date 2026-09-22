@@ -1,0 +1,15 @@
+[package]
+name = "kumiko-protocol"
+description = "Kumiko Plugin Protocol (KPP) messages, method catalog, versions and capabilities."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kumiko-types.workspace = true

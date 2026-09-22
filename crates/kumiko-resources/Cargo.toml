@@ -1,0 +1,16 @@
+[package]
+name = "kumiko-resources"
+description = "Resources service: L3 registry for grammars, themes, icons, l10n, keymaps, kits."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kumiko-types.workspace = true
+kumiko-service-api.workspace = true

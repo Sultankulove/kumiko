@@ -1,0 +1,55 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/*",
+    "app/kumiko",
+    "sdk/rust/kumiko-plugin-sdk",
+    "plugins/*",
+    "tests",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "Apache-2.0"
+repository = "https://github.com/Sultankulove/kumiko"
+
+[workspace.dependencies]
+# Internal crates. Allowed edges between them are enforced by tests/architecture.rs.
+kumiko-types = { path = "crates/kumiko-types" }
+kumiko-protocol = { path = "crates/kumiko-protocol" }
+kumiko-ipc = { path = "crates/kumiko-ipc" }
+kumiko-service-api = { path = "crates/kumiko-service-api" }
+kumiko-core = { path = "crates/kumiko-core" }
+kumiko-events = { path = "crates/kumiko-events" }
+kumiko-commands = { path = "crates/kumiko-commands" }
+kumiko-config = { path = "crates/kumiko-config" }
+kumiko-fs = { path = "crates/kumiko-fs" }
+kumiko-documents = { path = "crates/kumiko-documents" }
+kumiko-project = { path = "crates/kumiko-project" }
+kumiko-process = { path = "crates/kumiko-process" }
+kumiko-search = { path = "crates/kumiko-search" }
+kumiko-syntax = { path = "crates/kumiko-syntax" }
+kumiko-lsp = { path = "crates/kumiko-lsp" }
+kumiko-resources = { path = "crates/kumiko-resources" }
+kumiko-plugin-host = { path = "crates/kumiko-plugin-host" }
+kumiko-wasm-host = { path = "crates/kumiko-wasm-host" }
+kumiko-ui = { path = "crates/kumiko-ui" }
+kumiko-editor-view = { path = "crates/kumiko-editor-view" }
+kumiko-terminal-view = { path = "crates/kumiko-terminal-view" }
+kumiko-headless = { path = "crates/kumiko-headless" }
+kumiko-plugin-sdk = { path = "sdk/rust/kumiko-plugin-sdk" }
+
+# External crates. Every addition needs a license check (cargo deny) and a reason in the change description.
+cargo_metadata = "0.23"
+
+[workspace.lints.rust]
+unsafe_code = "deny" # FFI modules opt out locally with a `// SAFETY:` comment on every unsafe block
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "deny" # allowed in tests via clippy.toml; initialization code opts out locally
+expect_used = "deny"
+dbg_macro = "deny"
+todo = "deny"

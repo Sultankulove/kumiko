@@ -1,0 +1,31 @@
+[package]
+name = "kumiko-core"
+description = "CoreApi facade and composition of core services."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kumiko-types.workspace = true
+kumiko-protocol.workspace = true
+kumiko-ipc.workspace = true
+kumiko-service-api.workspace = true
+kumiko-events.workspace = true
+kumiko-commands.workspace = true
+kumiko-config.workspace = true
+kumiko-fs.workspace = true
+kumiko-documents.workspace = true
+kumiko-project.workspace = true
+kumiko-process.workspace = true
+kumiko-search.workspace = true
+kumiko-syntax.workspace = true
+kumiko-lsp.workspace = true
+kumiko-resources.workspace = true
+kumiko-plugin-host.workspace = true
+kumiko-wasm-host.workspace = true

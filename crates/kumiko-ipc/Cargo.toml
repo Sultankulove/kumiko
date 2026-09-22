@@ -1,0 +1,16 @@
+[package]
+name = "kumiko-ipc"
+description = "KPP transport: binary framing, RPC peer, streams, cancellation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kumiko-protocol.workspace = true
+kumiko-types.workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "kumiko-service-api"
+description = "Traits of core services and their shared types; services use each other only through them (ADR-019)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kumiko-types.workspace = true
+kumiko-protocol.workspace = true

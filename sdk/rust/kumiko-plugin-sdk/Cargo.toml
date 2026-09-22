@@ -1,0 +1,17 @@
+[package]
+name = "kumiko-plugin-sdk"
+description = "Rust SDK for Kumiko plugins (process and wasm kinds)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kumiko-protocol.workspace = true
+kumiko-ipc.workspace = true
+kumiko-types.workspace = true

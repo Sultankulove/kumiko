@@ -1,0 +1,15 @@
+[package]
+name = "kumiko-project"
+description = "Project service: workspace folders, project detection, exclusions."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kumiko-types.workspace = true

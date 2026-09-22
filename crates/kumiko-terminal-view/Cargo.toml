@@ -1,0 +1,16 @@
+[package]
+name = "kumiko-terminal-view"
+description = "Terminal view: VT emulation and rendering."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kumiko-core.workspace = true
+kumiko-types.workspace = true

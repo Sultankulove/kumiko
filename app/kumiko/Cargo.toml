@@ -1,0 +1,19 @@
+[package]
+name = "kumiko"
+description = "Kumiko IDE binary: composition root and CLI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kumiko-core.workspace = true
+kumiko-ui.workspace = true
+kumiko-editor-view.workspace = true
+kumiko-terminal-view.workspace = true
+kumiko-types.workspace = true

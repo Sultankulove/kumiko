@@ -1,0 +1,15 @@
+[package]
+name = "kumiko-process"
+description = "Process service: processes, PTY, output streams, tree termination, tasks."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kumiko-types.workspace = true

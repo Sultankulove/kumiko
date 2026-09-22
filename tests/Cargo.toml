@@ -1,0 +1,23 @@
+[package]
+name = "kumiko-tests"
+description = "Workspace-level tests: architecture guards, headless scenarios, modularity."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+cargo_metadata.workspace = true
+
+[[test]]
+name = "architecture"
+path = "architecture.rs"

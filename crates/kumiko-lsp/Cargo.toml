@@ -1,0 +1,16 @@
+[package]
+name = "kumiko-lsp"
+description = "Language service: generic LSP client, routing and result merging."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kumiko-types.workspace = true
+kumiko-protocol.workspace = true

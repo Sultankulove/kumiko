@@ -1,0 +1,16 @@
+[package]
+name = "kumiko-wasm-host"
+description = "WASM runtime for L2w plugins: wasmtime, WIT <-> KPP bindings, limits."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+kumiko-types.workspace = true
+kumiko-protocol.workspace = true

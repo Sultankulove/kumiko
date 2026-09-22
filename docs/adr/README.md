@@ -24,4 +24,4 @@
 | [016](0016-event-delivery-classes.md) | Классы доставки событий и resync | Accepted |
 | [017](0017-shared-runtime-hosts.md) | Общие рантайм-хосты JS/JVM/Python | Proposed (после MVP) |
 | [018](0018-l1-runtime-extensibility.md) | Расширяемость L1 в рантайме | Proposed (после MVP) |
-| [019](proposed/0019-cross-service-traits.md) | Где живут трейты взаимодействия сервисов | Proposed, нужно решение до E3 |
+| [019](0019-cross-service-traits.md) | Трейты взаимодействия сервисов: `kumiko-service-api` | Accepted |

@@ -15,3 +15,4 @@ workspace = true
 kumiko-types.workspace = true
 kumiko-protocol.workspace = true
 kumiko-ipc.workspace = true
+kumiko-service-api.workspace = true

@@ -20,6 +20,7 @@ enum Layer {
     Types,
     Protocol,
     Ipc,
+    ServiceApi,
     Service,
     Core,
     Ui,
@@ -37,13 +38,17 @@ impl Layer {
             Types => false,
             Protocol => matches!(target, Types),
             Ipc => matches!(target, Types | Protocol),
-            // Services talk to each other only through traits, never through direct crate edges.
-            Service => matches!(target, Types | Protocol | Ipc),
-            Core => matches!(target, Types | Protocol | Ipc | Service),
+            ServiceApi => matches!(target, Types | Protocol),
+            // Services talk to each other only through kumiko-service-api traits (ADR-019).
+            Service => matches!(target, Types | Protocol | Ipc | ServiceApi),
+            Core => matches!(target, Types | Protocol | Ipc | ServiceApi | Service),
             Ui | Headless => matches!(target, Types | Core),
             Sdk => matches!(target, Types | Protocol | Ipc),
             Plugin => matches!(target, Sdk),
-            App => matches!(target, Types | Protocol | Ipc | Service | Core | Ui),
+            App => matches!(
+                target,
+                Types | Protocol | Ipc | ServiceApi | Service | Core | Ui
+            ),
             TestHarness => true,
         }
     }
@@ -51,7 +56,10 @@ impl Layer {
     /// L0/L1 layers must stay free of language, build tool and VCS knowledge.
     fn is_language_agnostic(self) -> bool {
         use Layer::*;
-        matches!(self, Types | Protocol | Ipc | Service | Core | Ui | App)
+        matches!(
+            self,
+            Types | Protocol | Ipc | ServiceApi | Service | Core | Ui | App
+        )
     }
 }
 
@@ -84,6 +92,7 @@ fn classify(name: &str, rel_path: &str) -> Option<Layer> {
         "kumiko-types" => Layer::Types,
         "kumiko-protocol" => Layer::Protocol,
         "kumiko-ipc" => Layer::Ipc,
+        "kumiko-service-api" => Layer::ServiceApi,
         "kumiko-core" => Layer::Core,
         "kumiko-headless" => Layer::Headless,
         "kumiko-plugin-sdk" => Layer::Sdk,
@@ -195,6 +204,7 @@ fn graph_check_rejects_forbidden_edges() {
     };
     let packages = [
         pkg("kumiko-types", "crates/kumiko-types", &[]),
+        pkg("kumiko-ipc", "crates/kumiko-ipc", &["kumiko-types"]),
         pkg("kumiko-core", "crates/kumiko-core", &["kumiko-events"]),
         pkg(
             "kumiko-events",
@@ -204,12 +214,17 @@ fn graph_check_rejects_forbidden_edges() {
         pkg(
             "kumiko-documents",
             "crates/kumiko-documents",
-            &["kumiko-events"],
+            &["kumiko-service-api", "kumiko-events"],
+        ),
+        pkg(
+            "kumiko-service-api",
+            "crates/kumiko-service-api",
+            &["kumiko-types", "kumiko-ipc"],
         ),
         pkg(
             "kumiko-ui",
             "crates/kumiko-ui",
-            &["kumiko-core", "kumiko-documents"],
+            &["kumiko-core", "kumiko-documents", "kumiko-service-api"],
         ),
         pkg(
             "kumiko-plugin-sdk",
@@ -228,7 +243,9 @@ fn graph_check_rejects_forbidden_edges() {
     let expected = [
         "kumiko-events (Service) must not depend on kumiko-ui (Ui)",
         "kumiko-documents (Service) must not depend on kumiko-events (Service)",
+        "kumiko-service-api (ServiceApi) must not depend on kumiko-ipc (Ipc)",
         "kumiko-ui (Ui) must not depend on kumiko-documents (Service)",
+        "kumiko-ui (Ui) must not depend on kumiko-service-api (ServiceApi)",
         "kumiko-plugin-sdk (Sdk) must not depend on kumiko-core (Core)",
         "kumiko-git (Plugin) must not depend on kumiko-types (Types)",
         "kumiko (App) must not depend on kumiko-git (Plugin)",

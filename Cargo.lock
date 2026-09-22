@@ -56,6 +56,7 @@ dependencies = [
 name = "kumiko-commands"
 version = "0.1.0"
 dependencies = [
+ "kumiko-service-api",
  "kumiko-types",
 ]
 
@@ -63,6 +64,7 @@ dependencies = [
 name = "kumiko-config"
 version = "0.1.0"
 dependencies = [
+ "kumiko-service-api",
  "kumiko-types",
 ]
 
@@ -83,6 +85,7 @@ dependencies = [
  "kumiko-protocol",
  "kumiko-resources",
  "kumiko-search",
+ "kumiko-service-api",
  "kumiko-syntax",
  "kumiko-types",
  "kumiko-wasm-host",
@@ -92,6 +95,7 @@ dependencies = [
 name = "kumiko-documents"
 version = "0.1.0"
 dependencies = [
+ "kumiko-service-api",
  "kumiko-types",
 ]
 
@@ -107,6 +111,7 @@ dependencies = [
 name = "kumiko-events"
 version = "0.1.0"
 dependencies = [
+ "kumiko-service-api",
  "kumiko-types",
 ]
 
@@ -114,6 +119,7 @@ dependencies = [
 name = "kumiko-fs"
 version = "0.1.0"
 dependencies = [
+ "kumiko-service-api",
  "kumiko-types",
 ]
 
@@ -152,6 +158,7 @@ name = "kumiko-lsp"
 version = "0.1.0"
 dependencies = [
  "kumiko-protocol",
+ "kumiko-service-api",
  "kumiko-types",
 ]
 
@@ -161,6 +168,7 @@ version = "0.1.0"
 dependencies = [
  "kumiko-ipc",
  "kumiko-protocol",
+ "kumiko-service-api",
  "kumiko-types",
 ]
 
@@ -177,6 +185,7 @@ dependencies = [
 name = "kumiko-process"
 version = "0.1.0"
 dependencies = [
+ "kumiko-service-api",
  "kumiko-types",
 ]
 
@@ -184,6 +193,7 @@ dependencies = [
 name = "kumiko-project"
 version = "0.1.0"
 dependencies = [
+ "kumiko-service-api",
  "kumiko-types",
 ]
 
@@ -198,6 +208,7 @@ dependencies = [
 name = "kumiko-resources"
 version = "0.1.0"
 dependencies = [
+ "kumiko-service-api",
  "kumiko-types",
 ]
 
@@ -205,6 +216,15 @@ dependencies = [
 name = "kumiko-search"
 version = "0.1.0"
 dependencies = [
+ "kumiko-service-api",
+ "kumiko-types",
+]
+
+[[package]]
+name = "kumiko-service-api"
+version = "0.1.0"
+dependencies = [
+ "kumiko-protocol",
  "kumiko-types",
 ]
 
@@ -212,6 +232,7 @@ dependencies = [
 name = "kumiko-syntax"
 version = "0.1.0"
 dependencies = [
+ "kumiko-service-api",
  "kumiko-types",
 ]
 
@@ -254,6 +275,7 @@ name = "kumiko-wasm-host"
 version = "0.1.0"
 dependencies = [
  "kumiko-protocol",
+ "kumiko-service-api",
  "kumiko-types",
 ]
 

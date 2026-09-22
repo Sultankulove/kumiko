@@ -20,6 +20,7 @@ repository = "https://github.com/Sultankulove/kumiko"
 kumiko-types = { path = "crates/kumiko-types" }
 kumiko-protocol = { path = "crates/kumiko-protocol" }
 kumiko-ipc = { path = "crates/kumiko-ipc" }
+kumiko-service-api = { path = "crates/kumiko-service-api" }
 kumiko-core = { path = "crates/kumiko-core" }
 kumiko-events = { path = "crates/kumiko-events" }
 kumiko-commands = { path = "crates/kumiko-commands" }

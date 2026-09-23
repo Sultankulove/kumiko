@@ -1,0 +1,36 @@
+[resource]
+id = "kumiko.keymap.default"
+kind = "keymap"
+version = "0.1.0"
+name = "%keymap.default%"
+
+[[binding]]
+key = "ctrl+s"
+command = "file.save"
+
+[[binding]]
+key = "ctrl+k s"
+command = "file.saveAll"
+
+[[binding]]
+key = "ctrl+z"
+command = "edit.undo"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+shift+z"
+command = "edit.redo"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+y"
+command = "edit.redo"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+p"
+command = "workbench.quickOpen"
+
+[[binding]]
+key = "ctrl+shift+p"
+command = "workbench.showCommands"

@@ -14,3 +14,6 @@ workspace = true
 [dependencies]
 kumiko-core.workspace = true
 kumiko-types.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "time", "macros"] }

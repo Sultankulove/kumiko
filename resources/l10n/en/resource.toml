@@ -1,0 +1,25 @@
+[resource]
+id = "kumiko.l10n.en"
+kind = "l10n"
+version = "0.1.0"
+
+[l10n]
+locale = "en"
+
+[strings]
+"theme.hinokiDark" = "Hinoki Dark"
+"theme.hinokiLight" = "Hinoki Light"
+"theme.highContrast" = "High Contrast"
+"keymap.default" = "Default"
+"command.file.save" = "Save"
+"command.file.saveAll" = "Save All"
+"command.file.revert" = "Revert File"
+"command.edit.undo" = "Undo"
+"command.edit.redo" = "Redo"
+"command.workbench.quickOpen" = "Go to File…"
+"command.workbench.showCommands" = "Show All Commands"
+"document.conflict" = "The file changed on disk. Keep your changes or reload?"
+"document.conflict.keep" = "Keep Mine"
+"document.conflict.reload" = "Reload"
+"config.invalidValue" = "Invalid value for {key}: {message}"
+"fs.watchLimit" = "Too many files to watch; falling back to polling."

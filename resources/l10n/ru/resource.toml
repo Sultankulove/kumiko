@@ -1,0 +1,25 @@
+[resource]
+id = "kumiko.l10n.ru"
+kind = "l10n"
+version = "0.1.0"
+
+[l10n]
+locale = "ru"
+
+[strings]
+"theme.hinokiDark" = "Хиноки, тёмная"
+"theme.hinokiLight" = "Хиноки, светлая"
+"theme.highContrast" = "Высокий контраст"
+"keymap.default" = "По умолчанию"
+"command.file.save" = "Сохранить"
+"command.file.saveAll" = "Сохранить все"
+"command.file.revert" = "Отменить изменения файла"
+"command.edit.undo" = "Отменить"
+"command.edit.redo" = "Повторить"
+"command.workbench.quickOpen" = "Перейти к файлу…"
+"command.workbench.showCommands" = "Все команды"
+"document.conflict" = "Файл изменён на диске. Оставить ваши правки или перечитать файл?"
+"document.conflict.keep" = "Оставить мои"
+"document.conflict.reload" = "Перечитать"
+"config.invalidValue" = "Недопустимое значение {key}: {message}"
+"fs.watchLimit" = "Слишком много файлов для отслеживания; включён опрос по таймеру."

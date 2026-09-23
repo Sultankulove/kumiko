@@ -14,3 +14,6 @@ workspace = true
 [dependencies]
 kumiko-types.workspace = true
 kumiko-protocol.workspace = true
+regex.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

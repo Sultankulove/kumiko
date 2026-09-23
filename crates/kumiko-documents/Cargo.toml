@@ -13,4 +13,13 @@ workspace = true
 
 [dependencies]
 kumiko-types.workspace = true
+kumiko-protocol.workspace = true
 kumiko-service-api.workspace = true
+ropey.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }

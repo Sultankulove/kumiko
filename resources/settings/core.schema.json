@@ -1,0 +1,18 @@
+{
+  "$comment": "Settings of the core (spec, section 22). Defaults that name tools live here, in data, not in core code.",
+  "properties": {
+    "editor.fontSize": { "type": "integer", "default": 14, "minimum": 6, "maximum": 100, "description": "Font size of the editor, in points." },
+    "editor.fontFamily": { "type": "string", "default": "monospace" },
+    "editor.tabSize": { "type": "integer", "default": 4, "minimum": 1, "maximum": 16 },
+    "workbench.theme": { "type": "string", "default": "kumiko.theme.hinoki-dark" },
+    "workbench.locale": { "type": ["string", "null"], "default": null, "description": "UI language; null follows LANG." },
+    "files.eol": { "enum": ["auto", "lf", "crlf"], "default": "auto", "description": "Line endings of new files; existing files keep theirs." },
+    "files.exclude": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Globs hidden from the file tree and searches." },
+    "files.watcherExclude": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": ["**/.git/**", "**/.hg/**", "**/.svn/**", "**/node_modules/**", "**/target/**", "**/build/**"],
+      "description": "Globs whose changes are not watched."
+    }
+  }
+}

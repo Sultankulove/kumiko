@@ -2,7 +2,7 @@
 
 Модульная native IDE на Rust: ядро, UI и плагины держатся вместе только стабильными контрактами, любую деталь можно вынуть и заменить. Первая платформа — Linux, первый язык — Java.
 
-Статус: ранняя разработка, этап E2 (транспорт протокола плагинов). Полное ТЗ — [docs/spec/kumiko-tz-v1.0.md](docs/spec/kumiko-tz-v1.0.md), решения — [docs/adr/](docs/adr/), протокол плагинов — [docs/protocol/v1.md](docs/protocol/v1.md).
+Статус: ранняя разработка, этап E3 (базовые сервисы ядра, headless-сценарии). Полное ТЗ — [docs/spec/kumiko-tz-v1.0.md](docs/spec/kumiko-tz-v1.0.md), решения — [docs/adr/](docs/adr/), протокол плагинов — [docs/protocol/v1.md](docs/protocol/v1.md).
 
 ## Сборка
 
@@ -29,6 +29,7 @@ cargo deny check
 | `app/kumiko/` | Бинарник: composition root и CLI |
 | `sdk/` | WIT-пакет, JSON Schema протокола и Rust SDK для плагинов |
 | `plugins/` | Встроенные плагины: java (процесс), git и terminal (WASM) |
+| `resources/` | Данные L3: темы, локализация, раскладка клавиш, схема настроек ядра |
 | `tests/` | Архитектурные, headless- и модульные тесты |
 | `docs/` | ТЗ, ADR, исследования, протокол |
 

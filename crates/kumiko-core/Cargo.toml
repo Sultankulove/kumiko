@@ -14,8 +14,8 @@ workspace = true
 [dependencies]
 kumiko-types.workspace = true
 kumiko-protocol.workspace = true
-kumiko-ipc.workspace = true
 kumiko-service-api.workspace = true
+kumiko-ipc.workspace = true
 kumiko-events.workspace = true
 kumiko-commands.workspace = true
 kumiko-config.workspace = true
@@ -29,3 +29,11 @@ kumiko-lsp.workspace = true
 kumiko-resources.workspace = true
 kumiko-plugin-host.workspace = true
 kumiko-wasm-host.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }

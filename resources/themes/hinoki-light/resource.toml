@@ -1,0 +1,44 @@
+[resource]
+id = "kumiko.theme.hinoki-light"
+kind = "theme"
+version = "0.1.0"
+name = "%theme.hinokiLight%"
+
+[theme]
+base = "light"
+
+[colors]
+"editor.background" = "#FAF6EE"
+"editor.foreground" = "#2B2A28"
+"editor.lineHighlight" = "#F1EADC"
+"editor.selection" = "#3D5A8033"
+"editor.cursor" = "#3D5A80"
+"editor.lineNumber" = "#A09A8E"
+"editor.lineNumber.active" = "#3D5A80"
+"panel.background" = "#F3EDE1"
+"sideBar.background" = "#F3EDE1"
+"statusBar.background" = "#3D5A80"
+"statusBar.foreground" = "#FAF6EE"
+"tab.active.background" = "#FAF6EE"
+"tab.inactive.background" = "#EDE5D6"
+"border" = "#DDD3C2"
+"focusBorder" = "#2A9D8F"
+"accent" = "#2A9D8F"
+"error" = "#C4452B"
+"warning" = "#B7791F"
+"info" = "#3D5A80"
+"git.modified" = "#B7791F"
+"git.added" = "#3F8A3F"
+"git.deleted" = "#C4452B"
+
+[syntax]
+"keyword" = { fg = "#C4452B", bold = true }
+"function" = "#3D5A80"
+"type" = "#8A5A1F"
+"string" = "#4F7A2E"
+"number" = "#7E4E9C"
+"constant" = "#7E4E9C"
+"comment" = { fg = "#8C877D", italic = true }
+"variable" = "#2B2A28"
+"operator" = "#5C574E"
+"punctuation" = "#6E685E"

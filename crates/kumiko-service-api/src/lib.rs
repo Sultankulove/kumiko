@@ -2,5 +2,18 @@
 //!
 //! Core services never depend on each other directly: a service receives its neighbours as
 //! trait objects from this crate when `kumiko-core` composes them (ADR-019).
-//!
-//! Stub created in E0; the traits land together with the services in E3 (see docs/spec, section 28).
+
+use std::future::Future;
+use std::pin::Pin;
+
+mod event;
+mod fs;
+pub mod when;
+
+pub use event::{Event, EventSink};
+pub use fs::{FileSystem, FsError, WriteOptions};
+pub use kumiko_protocol::events::DeliveryClass;
+pub use kumiko_protocol::methods::fs::{DirEntry, FileKind, FileStat};
+
+/// Boxed future used by object-safe async trait methods.
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;

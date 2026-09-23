@@ -1,0 +1,42 @@
+[resource]
+id = "kumiko.theme.high-contrast"
+kind = "theme"
+version = "0.1.0"
+name = "%theme.highContrast%"
+
+[theme]
+base = "high-contrast"
+
+[colors]
+"editor.background" = "#000000"
+"editor.foreground" = "#FFFFFF"
+"editor.lineHighlight" = "#1A1A1A"
+"editor.selection" = "#FFFFFF55"
+"editor.cursor" = "#FFD166"
+"editor.lineNumber" = "#BFBFBF"
+"editor.lineNumber.active" = "#FFFFFF"
+"panel.background" = "#000000"
+"sideBar.background" = "#000000"
+"statusBar.background" = "#000000"
+"statusBar.foreground" = "#FFFFFF"
+"border" = "#FFFFFF"
+"focusBorder" = "#FFD166"
+"accent" = "#5FE3D0"
+"error" = "#FF6B5A"
+"warning" = "#FFD166"
+"info" = "#7FD1FF"
+"git.modified" = "#FFD166"
+"git.added" = "#7CFC7C"
+"git.deleted" = "#FF6B5A"
+
+[syntax]
+"keyword" = { fg = "#FF9E80", bold = true }
+"function" = "#7FD1FF"
+"type" = "#FFD166"
+"string" = "#B8F28C"
+"number" = "#E0B0FF"
+"constant" = "#E0B0FF"
+"comment" = { fg = "#C0C0C0", italic = true }
+"variable" = "#FFFFFF"
+"operator" = "#FFFFFF"
+"punctuation" = "#FFFFFF"

@@ -1,3 +1,7 @@
 //! Plugin Host: manifests, registry, supervision, interfaces, kits, KPP bridge.
 //!
-//! Stub created in E0; the implementation lands in a later stage (see docs/spec, section 28).
+//! E4 is in progress: manifests are parsed and validated; the rest follows.
+
+pub mod manifest;
+
+pub use manifest::{ActivationEvent, Manifest, ManifestError, Permission, PluginKind};

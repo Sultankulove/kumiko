@@ -2,7 +2,7 @@
 
 Модульная native IDE на Rust: ядро, UI и плагины держатся вместе только стабильными контрактами, любую деталь можно вынуть и заменить. Первая платформа — Linux, первый язык — Java.
 
-Статус: ранняя разработка, этап E0 (скелет). Полное ТЗ — [docs/spec/kumiko-tz-v1.0.md](docs/spec/kumiko-tz-v1.0.md), решения — [docs/adr/](docs/adr/).
+Статус: ранняя разработка, этап E1 (типы и протокол плагинов). Полное ТЗ — [docs/spec/kumiko-tz-v1.0.md](docs/spec/kumiko-tz-v1.0.md), решения — [docs/adr/](docs/adr/), протокол плагинов — [docs/protocol/v1.md](docs/protocol/v1.md).
 
 ## Сборка
 
@@ -27,12 +27,18 @@ cargo deny check
 |---|---|
 | `crates/` | Ядро (L0) и UI-компоненты (L1), граница модуля = граница крейта |
 | `app/kumiko/` | Бинарник: composition root и CLI |
-| `sdk/` | WIT-пакет и Rust SDK для плагинов |
+| `sdk/` | WIT-пакет, JSON Schema протокола и Rust SDK для плагинов |
 | `plugins/` | Встроенные плагины: java (процесс), git и terminal (WASM) |
 | `tests/` | Архитектурные, headless- и модульные тесты |
 | `docs/` | ТЗ, ADR, исследования, протокол |
 
 Допустимые зависимости между крейтами проверяет `tests/architecture.rs`; он же следит, чтобы в коде ядра и UI не появлялось знание о конкретных языках, сборщиках и VCS.
+
+Схема `sdk/schema/kpp.schema.json` и таблицы в `docs/protocol/v1.md` генерируются из `kumiko-protocol`; тест падает, если они разошлись с кодом. После намеренного изменения протокола:
+
+```bash
+KUMIKO_BLESS=1 cargo test -p kumiko-protocol --test artifacts
+```
 
 ## Лицензия
 

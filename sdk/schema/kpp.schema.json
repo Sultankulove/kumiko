@@ -1,0 +1,2836 @@
+{
+  "$defs": {
+    "ApplyEditParams": {
+      "properties": {
+        "baseVersion": {
+          "$ref": "#/$defs/DocumentVersion",
+          "description": "Version the edits were computed against. Older versions are rebased; a conflict fails\nwith `ContentModified`."
+        },
+        "edits": {
+          "description": "Non-overlapping edits, positions relative to `baseVersion`.",
+          "items": {
+            "$ref": "#/$defs/TextEdit"
+          },
+          "type": "array"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "uri",
+        "baseVersion",
+        "edits"
+      ],
+      "type": "object"
+    },
+    "ApplyEditResult": {
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/DocumentVersion",
+          "description": "Version after the edit."
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "type": "object"
+    },
+    "CancelParams": {
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/RequestId",
+          "description": "Id of the request to cancel; it completes with `RequestCancelled`."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "Collapsible": {
+      "oneOf": [
+        {
+          "enum": [
+            "collapsed",
+            "expanded"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "none",
+          "description": "A leaf.",
+          "type": "string"
+        }
+      ]
+    },
+    "CommandCall": {
+      "description": "A command with arguments, e.g. the action of a status item or a tree node.",
+      "properties": {
+        "args": {
+          "default": [],
+          "items": true,
+          "type": "array"
+        },
+        "command": {
+          "$ref": "#/$defs/CommandId"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
+    "CommandId": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]*(\\.[A-Za-z][A-Za-z0-9_-]*)+$",
+      "type": "string"
+    },
+    "ConfigChanged": {
+      "properties": {
+        "keys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "keys"
+      ],
+      "type": "object"
+    },
+    "ConfigGetParams": {
+      "properties": {
+        "key": {
+          "description": "A key (`editor.fontSize`) or a section prefix (`java`) returning an object.",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConfigScope"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "type": "object"
+    },
+    "ConfigScope": {
+      "properties": {
+        "languageId": {
+          "description": "Language whose `[language.<id>]` overrides apply.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uri": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uri"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Resource whose workspace folder settings apply."
+        }
+      },
+      "type": "object"
+    },
+    "ConfigTarget": {
+      "enum": [
+        "user",
+        "workspace"
+      ],
+      "type": "string"
+    },
+    "ConfigUpdateParams": {
+      "properties": {
+        "key": {
+          "description": "Key in the plugin's own namespace.",
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/ConfigTarget"
+        },
+        "value": {
+          "description": "`null` removes the value from the target layer."
+        }
+      },
+      "required": [
+        "key",
+        "value",
+        "target"
+      ],
+      "type": "object"
+    },
+    "Content": {
+      "description": "Bytes in JSON: UTF-8 text as is, anything else base64-encoded (RFC 4648, with padding).",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "base64": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "base64"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "DirEntry": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FileKind"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "DocumentChanged": {
+      "properties": {
+        "changes": {
+          "description": "Edits in application order, positions relative to the previous version.",
+          "items": {
+            "$ref": "#/$defs/TextEdit"
+          },
+          "type": "array"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "version": {
+          "$ref": "#/$defs/DocumentVersion",
+          "description": "Version after the change; exactly one more than the previous event for this document."
+        }
+      },
+      "required": [
+        "uri",
+        "version",
+        "changes"
+      ],
+      "type": "object"
+    },
+    "DocumentClosed": {
+      "properties": {
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "uri"
+      ],
+      "type": "object"
+    },
+    "DocumentOpened": {
+      "properties": {
+        "languageId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "version": {
+          "$ref": "#/$defs/DocumentVersion"
+        }
+      },
+      "required": [
+        "uri",
+        "version"
+      ],
+      "type": "object"
+    },
+    "DocumentParams": {
+      "properties": {
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "uri"
+      ],
+      "type": "object"
+    },
+    "DocumentSaved": {
+      "properties": {
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "version": {
+          "$ref": "#/$defs/DocumentVersion"
+        }
+      },
+      "required": [
+        "uri",
+        "version"
+      ],
+      "type": "object"
+    },
+    "DocumentSnapshot": {
+      "properties": {
+        "languageId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "version": {
+          "$ref": "#/$defs/DocumentVersion"
+        }
+      },
+      "required": [
+        "uri",
+        "version",
+        "text"
+      ],
+      "type": "object"
+    },
+    "DocumentText": {
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DocumentVersion"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Version of the open document; `null` when the text was read from storage."
+        }
+      },
+      "required": [
+        "uri",
+        "text"
+      ],
+      "type": "object"
+    },
+    "DocumentVersion": {
+      "description": "Monotonic document version; every transaction increments it by one.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "EnvMode": {
+      "oneOf": [
+        {
+          "const": "merge",
+          "description": "Add `env` to the IDE environment.",
+          "type": "string"
+        },
+        {
+          "const": "replace",
+          "description": "Use only `env`.",
+          "type": "string"
+        }
+      ]
+    },
+    "EventNotifyParams": {
+      "properties": {
+        "payload": true,
+        "subscription": {
+          "$ref": "#/$defs/SubscriptionId"
+        },
+        "topic": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "subscription",
+        "topic",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "FileDecoration": {
+      "properties": {
+        "badge": {
+          "description": "One or two characters, e.g. `M`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "color": {
+          "description": "Theme color token.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tooltip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "uri"
+      ],
+      "type": "object"
+    },
+    "FileDecorationsParams": {
+      "properties": {
+        "clear": {
+          "default": [],
+          "description": "URIs whose decorations from this plugin are removed.",
+          "items": {
+            "$ref": "#/$defs/Uri"
+          },
+          "type": "array"
+        },
+        "set": {
+          "default": [],
+          "description": "Decorations to add or replace.",
+          "items": {
+            "$ref": "#/$defs/FileDecoration"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "FileKind": {
+      "enum": [
+        "file",
+        "directory",
+        "symlink"
+      ],
+      "type": "string"
+    },
+    "FileStat": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FileKind"
+        },
+        "mtimeMs": {
+          "description": "Modification time, milliseconds since the Unix epoch.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "readonly": {
+          "type": "boolean"
+        },
+        "size": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "size",
+        "readonly"
+      ],
+      "type": "object"
+    },
+    "FsChange": {
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FsChangeKind"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "uri",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "FsChangeKind": {
+      "enum": [
+        "created",
+        "changed",
+        "deleted"
+      ],
+      "type": "string"
+    },
+    "FsChanged": {
+      "properties": {
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/FsChange"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "changes"
+      ],
+      "type": "object"
+    },
+    "FsDeleteParams": {
+      "properties": {
+        "recursive": {
+          "type": "boolean"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "uri",
+        "recursive"
+      ],
+      "type": "object"
+    },
+    "FsReadDirResult": {
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/DirEntry"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "type": "object"
+    },
+    "FsReadResult": {
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/Content"
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "type": "object"
+    },
+    "FsRenameParams": {
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/Uri"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "to": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "overwrite"
+      ],
+      "type": "object"
+    },
+    "FsWatchParams": {
+      "properties": {
+        "base": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Uri"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Directory the glob is relative to; all workspace folders when omitted."
+        },
+        "glob": {
+          "description": "Glob relative to `base`, e.g. `**/*.toml`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "glob"
+      ],
+      "type": "object"
+    },
+    "FsWriteParams": {
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/Content"
+        },
+        "create": {
+          "description": "Create the file if it does not exist.",
+          "type": "boolean"
+        },
+        "overwrite": {
+          "description": "Replace an existing file.",
+          "type": "boolean"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "uri",
+        "content",
+        "create",
+        "overwrite"
+      ],
+      "type": "object"
+    },
+    "HostCapabilities": {
+      "properties": {
+        "experimental": true,
+        "methods": {
+          "description": "Plugin-to-host methods the host implements. Minor versions add methods; plugins check\nthis list instead of comparing versions.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "methods"
+      ],
+      "type": "object"
+    },
+    "InitializeParams": {
+      "properties": {
+        "apiVersion": {
+          "description": "Protocol version of the host, e.g. `0.1.0`.",
+          "type": "string"
+        },
+        "config": {
+          "description": "Current values of the plugin's own settings namespace."
+        },
+        "hostCapabilities": {
+          "$ref": "#/$defs/HostCapabilities"
+        },
+        "locale": {
+          "description": "UI locale, e.g. `en` or `ru`.",
+          "type": "string"
+        },
+        "pluginId": {
+          "$ref": "#/$defs/PluginId",
+          "description": "Id of the plugin being initialized, as in its manifest."
+        },
+        "workspace": {
+          "$ref": "#/$defs/WorkspaceInfo"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "pluginId",
+        "hostCapabilities",
+        "workspace",
+        "config",
+        "locale"
+      ],
+      "type": "object"
+    },
+    "InitializeResult": {
+      "properties": {
+        "apiVersion": {
+          "description": "Protocol version of the plugin; a different major version fails the handshake.",
+          "type": "string"
+        },
+        "pluginCapabilities": {
+          "$ref": "#/$defs/PluginCapabilities"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "pluginCapabilities"
+      ],
+      "type": "object"
+    },
+    "InterfaceAvailabilityChanged": {
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "interface": {
+          "$ref": "#/$defs/InterfaceId"
+        }
+      },
+      "required": [
+        "interface",
+        "available"
+      ],
+      "type": "object"
+    },
+    "InterfaceId": {
+      "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$",
+      "type": "string"
+    },
+    "LaunchSpec": {
+      "properties": {
+        "args": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "command": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "type": "object"
+        },
+        "initializationOptions": true
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
+    "LogLevel": {
+      "enum": [
+        "trace",
+        "debug",
+        "info",
+        "warn",
+        "error"
+      ],
+      "type": "string"
+    },
+    "LogParams": {
+      "properties": {
+        "level": {
+          "$ref": "#/$defs/LogLevel"
+        },
+        "message": {
+          "type": "string"
+        },
+        "target": {
+          "description": "Module or component inside the plugin.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "level",
+        "message"
+      ],
+      "type": "object"
+    },
+    "LspMessageParams": {
+      "properties": {
+        "method": {
+          "description": "LSP method name.",
+          "type": "string"
+        },
+        "params": {
+          "description": "LSP params, positions in the server's encoding."
+        },
+        "serverId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "serverId",
+        "method",
+        "params"
+      ],
+      "type": "object"
+    },
+    "MessageLevel": {
+      "enum": [
+        "info",
+        "warning",
+        "error"
+      ],
+      "type": "string"
+    },
+    "MiddlewareResult": {
+      "description": "What the core does with an intercepted message.",
+      "oneOf": [
+        {
+          "description": "Answer with this result instead of the default handling.",
+          "properties": {
+            "action": {
+              "const": "respond",
+              "type": "string"
+            },
+            "result": true
+          },
+          "required": [
+            "action",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Continue with the default handling, with possibly modified params.",
+          "properties": {
+            "action": {
+              "const": "forward",
+              "type": "string"
+            },
+            "params": true
+          },
+          "required": [
+            "action",
+            "params"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "OpenDocumentInEditorParams": {
+      "properties": {
+        "preview": {
+          "default": false,
+          "description": "Open in a preview tab that the next preview replaces.",
+          "type": "boolean"
+        },
+        "selection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Range"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Range to select and reveal."
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "uri"
+      ],
+      "type": "object"
+    },
+    "PluginCapabilities": {
+      "properties": {
+        "experimental": true,
+        "lspMiddleware": {
+          "default": [],
+          "description": "LSP methods the plugin intercepts through `lsp/middleware/request`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "methods": {
+          "description": "Optional host-to-plugin methods the plugin handles, e.g. `state/save`,\n`document/resolveContent`, `task/provide`, `ui/tree/getChildren`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "methods"
+      ],
+      "type": "object"
+    },
+    "PluginId": {
+      "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$",
+      "type": "string"
+    },
+    "PluginState": {
+      "description": "Plugin lifecycle state (spec, section 13).",
+      "enum": [
+        "installed",
+        "disabled",
+        "enabled",
+        "starting",
+        "running",
+        "stopping",
+        "crashed",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "PluginStateChanged": {
+      "properties": {
+        "plugin": {
+          "$ref": "#/$defs/PluginId"
+        },
+        "reason": {
+          "description": "Why the plugin is in this state, e.g. a missing required interface.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/PluginState"
+        }
+      },
+      "required": [
+        "plugin",
+        "state"
+      ],
+      "type": "object"
+    },
+    "Position": {
+      "description": "Position in a document: zero-based line and UTF-8 byte offset inside that line.",
+      "properties": {
+        "character": {
+          "description": "UTF-8 byte offset inside the line.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "line": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "line",
+        "character"
+      ],
+      "type": "object"
+    },
+    "ProcessExitedParams": {
+      "properties": {
+        "exitCode": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "process": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "signal": {
+          "description": "Number of the signal that terminated the process.",
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "process"
+      ],
+      "type": "object"
+    },
+    "ProcessKillParams": {
+      "properties": {
+        "process": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "signal": {
+          "$ref": "#/$defs/Signal",
+          "description": "Sent to the whole process group."
+        }
+      },
+      "required": [
+        "process",
+        "signal"
+      ],
+      "type": "object"
+    },
+    "ProcessResizeParams": {
+      "properties": {
+        "process": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "size": {
+          "$ref": "#/$defs/PtySize"
+        }
+      },
+      "required": [
+        "process",
+        "size"
+      ],
+      "type": "object"
+    },
+    "ProcessSpec": {
+      "description": "What to run. The owner is the calling plugin; the host records it.",
+      "properties": {
+        "args": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "command": {
+          "type": "string"
+        },
+        "cwd": {
+          "description": "Absolute working directory; the first workspace folder when omitted.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "type": "object"
+        },
+        "envMode": {
+          "$ref": "#/$defs/EnvMode",
+          "default": "merge"
+        },
+        "killOnOwnerExit": {
+          "default": false,
+          "description": "Kill the process tree when the owning plugin stops.",
+          "type": "boolean"
+        },
+        "pty": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PtySize"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Run in a pseudo-terminal of this size."
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
+    "ProcessWriteParams": {
+      "properties": {
+        "data": {
+          "$ref": "#/$defs/Content",
+          "description": "Bytes for stdin (or the terminal input)."
+        },
+        "process": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "process",
+        "data"
+      ],
+      "type": "object"
+    },
+    "ProgressBeginParams": {
+      "properties": {
+        "cancellable": {
+          "default": false,
+          "description": "Show a cancel button; cancellation arrives as `ui/progress/cancel`.",
+          "type": "boolean"
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "percentage": {
+          "description": "0..=100; `null` for indeterminate progress.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "token": {
+          "$ref": "#/$defs/ProgressToken"
+        }
+      },
+      "required": [
+        "token",
+        "title"
+      ],
+      "type": "object"
+    },
+    "ProgressCancelParams": {
+      "properties": {
+        "token": {
+          "$ref": "#/$defs/ProgressToken"
+        }
+      },
+      "required": [
+        "token"
+      ],
+      "type": "object"
+    },
+    "ProgressEndParams": {
+      "properties": {
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "token": {
+          "$ref": "#/$defs/ProgressToken"
+        }
+      },
+      "required": [
+        "token"
+      ],
+      "type": "object"
+    },
+    "ProgressParams": {
+      "properties": {
+        "token": {
+          "$ref": "#/$defs/ProgressToken"
+        },
+        "value": true
+      },
+      "required": [
+        "token",
+        "value"
+      ],
+      "type": "object"
+    },
+    "ProgressReportParams": {
+      "properties": {
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "percentage": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "token": {
+          "$ref": "#/$defs/ProgressToken"
+        }
+      },
+      "required": [
+        "token"
+      ],
+      "type": "object"
+    },
+    "ProgressToken": {
+      "description": "Token that ties progress reports to an operation, chosen by the side that starts it.",
+      "type": "string"
+    },
+    "PtySize": {
+      "properties": {
+        "cols": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rows": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cols",
+        "rows"
+      ],
+      "type": "object"
+    },
+    "PublishParams": {
+      "properties": {
+        "payload": true,
+        "topic": {
+          "description": "Topic in the plugin's own namespace.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "topic",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "QuickPickItem": {
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "picked": {
+          "default": false,
+          "description": "Initially selected (multi-select only).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "type": "object"
+    },
+    "QuickPickResult": {
+      "properties": {
+        "selected": {
+          "description": "Ids of the chosen items.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "selected"
+      ],
+      "type": "object"
+    },
+    "Range": {
+      "description": "Half-open range `[start, end)`.",
+      "properties": {
+        "end": {
+          "$ref": "#/$defs/Position"
+        },
+        "start": {
+          "$ref": "#/$defs/Position"
+        }
+      },
+      "required": [
+        "start",
+        "end"
+      ],
+      "type": "object"
+    },
+    "RegisterCommandParams": {
+      "properties": {
+        "command": {
+          "$ref": "#/$defs/CommandId",
+          "description": "A command created at runtime; commands from the manifest need no registration."
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
+    "RequestId": {
+      "anyOf": [
+        {
+          "format": "int64",
+          "type": "integer"
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "description": "Request id: a number or a string, as in JSON-RPC 2.0."
+    },
+    "ResolveLaunchParams": {
+      "properties": {
+        "languageId": {
+          "type": "string"
+        },
+        "serverId": {
+          "description": "Server id from `contributes.languageServers`.",
+          "type": "string"
+        },
+        "workspaceFolder": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "serverId",
+        "languageId",
+        "workspaceFolder"
+      ],
+      "type": "object"
+    },
+    "ResolvedContent": {
+      "properties": {
+        "languageId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "ResponseError": {
+      "description": "Error object of a failed response.",
+      "properties": {
+        "code": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "data": true,
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "ResyncParams": {
+      "properties": {
+        "topics": {
+          "description": "Topics whose subscriptions were dropped after a queue overflow.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "topics"
+      ],
+      "type": "object"
+    },
+    "SavedState": {
+      "properties": {
+        "state": {
+          "description": "Opaque state the plugin wants back after a reload."
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "type": "object"
+    },
+    "ServiceCallParams": {
+      "properties": {
+        "interface": {
+          "$ref": "#/$defs/InterfaceId"
+        },
+        "method": {
+          "type": "string"
+        },
+        "params": true
+      },
+      "required": [
+        "interface",
+        "method",
+        "params"
+      ],
+      "type": "object"
+    },
+    "ServiceInvokeParams": {
+      "properties": {
+        "caller": {
+          "$ref": "#/$defs/PluginId",
+          "description": "The consumer that made the call."
+        },
+        "interface": {
+          "$ref": "#/$defs/InterfaceId"
+        },
+        "method": {
+          "type": "string"
+        },
+        "params": true
+      },
+      "required": [
+        "interface",
+        "method",
+        "params",
+        "caller"
+      ],
+      "type": "object"
+    },
+    "SetContextParams": {
+      "properties": {
+        "key": {
+          "description": "Context key in the plugin's own namespace, e.g. `java.serverReady`.",
+          "type": "string"
+        },
+        "value": {
+          "description": "`null` removes the key."
+        }
+      },
+      "required": [
+        "key",
+        "value"
+      ],
+      "type": "object"
+    },
+    "SetStatusItemParams": {
+      "properties": {
+        "id": {
+          "description": "Item id, unique within the plugin.",
+          "type": "string"
+        },
+        "item": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StatusItem"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`null` removes the item."
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "ShowInputParams": {
+      "properties": {
+        "password": {
+          "default": false,
+          "description": "Hide the typed text.",
+          "type": "boolean"
+        },
+        "placeholder": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prompt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "description": "Initial value.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ShowMessageParams": {
+      "properties": {
+        "actions": {
+          "default": [],
+          "description": "Button labels; the chosen one is returned.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "level": {
+          "$ref": "#/$defs/MessageLevel"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "level",
+        "message"
+      ],
+      "type": "object"
+    },
+    "ShowMessageResult": {
+      "properties": {
+        "action": {
+          "description": "`null` when the message was dismissed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ShowQuickPickParams": {
+      "properties": {
+        "canPickMany": {
+          "default": false,
+          "type": "boolean"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/QuickPickItem"
+          },
+          "type": "array"
+        },
+        "placeholder": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "items"
+      ],
+      "type": "object"
+    },
+    "Signal": {
+      "enum": [
+        "interrupt",
+        "terminate",
+        "kill"
+      ],
+      "type": "string"
+    },
+    "SpawnParams": {
+      "properties": {
+        "spec": {
+          "$ref": "#/$defs/ProcessSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "SpawnPtyResult": {
+      "properties": {
+        "output": {
+          "$ref": "#/$defs/StreamId",
+          "description": "Terminal output."
+        },
+        "process": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "process",
+        "output"
+      ],
+      "type": "object"
+    },
+    "SpawnResult": {
+      "properties": {
+        "process": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stderr": {
+          "$ref": "#/$defs/StreamId"
+        },
+        "stdout": {
+          "$ref": "#/$defs/StreamId"
+        }
+      },
+      "required": [
+        "process",
+        "stdout",
+        "stderr"
+      ],
+      "type": "object"
+    },
+    "StatusAlignment": {
+      "enum": [
+        "left",
+        "right"
+      ],
+      "type": "string"
+    },
+    "StatusItem": {
+      "properties": {
+        "alignment": {
+          "$ref": "#/$defs/StatusAlignment"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandCall"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "priority": {
+          "default": 0,
+          "description": "Higher values are placed closer to the edge.",
+          "format": "int32",
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        },
+        "tooltip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "text",
+        "alignment"
+      ],
+      "type": "object"
+    },
+    "StreamId": {
+      "description": "Binary stream carried by frames of kind 1 (data) and 2 (close).",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "SubscribeParams": {
+      "properties": {
+        "glob": {
+          "description": "Glob over URIs for URI-carrying topics such as `fs.changed`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "topics": {
+          "description": "Topics such as `document.changed`, or a namespace prefix such as `document.*`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "topics"
+      ],
+      "type": "object"
+    },
+    "SubscribeResult": {
+      "properties": {
+        "subscription": {
+          "$ref": "#/$defs/SubscriptionId"
+        }
+      },
+      "required": [
+        "subscription"
+      ],
+      "type": "object"
+    },
+    "SubscriptionId": {
+      "description": "Subscription handle returned by `event/subscribe` and `fs/watch`.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "TaskDefinition": {
+      "properties": {
+        "group": {
+          "$ref": "#/$defs/TaskGroup"
+        },
+        "id": {
+          "description": "Unique within the provider.",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "problemMatcher": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spec": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProcessSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What to run; may be left empty by `task/provide` and filled by `task/resolve`."
+        },
+        "type": {
+          "description": "Task provider type declared in the manifest.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "type",
+        "group"
+      ],
+      "type": "object"
+    },
+    "TaskExecution": {
+      "properties": {
+        "execution": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "execution"
+      ],
+      "type": "object"
+    },
+    "TaskFinished": {
+      "properties": {
+        "durationMs": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "execution": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "exitCode": {
+          "description": "`null` when the process was killed by a signal.",
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "execution",
+        "durationMs"
+      ],
+      "type": "object"
+    },
+    "TaskGroup": {
+      "enum": [
+        "build",
+        "test",
+        "run"
+      ],
+      "type": "string"
+    },
+    "TaskList": {
+      "properties": {
+        "tasks": {
+          "items": {
+            "$ref": "#/$defs/TaskDefinition"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "tasks"
+      ],
+      "type": "object"
+    },
+    "TaskParams": {
+      "properties": {
+        "task": {
+          "$ref": "#/$defs/TaskDefinition"
+        }
+      },
+      "required": [
+        "task"
+      ],
+      "type": "object"
+    },
+    "TaskProvideParams": {
+      "properties": {
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "TaskStarted": {
+      "properties": {
+        "execution": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "execution",
+        "label"
+      ],
+      "type": "object"
+    },
+    "TextEdit": {
+      "description": "Replacement of `range` with `new_text`; an empty range inserts, empty text deletes.",
+      "properties": {
+        "newText": {
+          "type": "string"
+        },
+        "range": {
+          "$ref": "#/$defs/Range"
+        }
+      },
+      "required": [
+        "range",
+        "newText"
+      ],
+      "type": "object"
+    },
+    "TreeChildren": {
+      "properties": {
+        "children": {
+          "items": {
+            "$ref": "#/$defs/TreeNode"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "children"
+      ],
+      "type": "object"
+    },
+    "TreeGetChildrenParams": {
+      "properties": {
+        "nodeId": {
+          "type": "string"
+        },
+        "viewId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "viewId",
+        "nodeId"
+      ],
+      "type": "object"
+    },
+    "TreeNode": {
+      "properties": {
+        "children": {
+          "description": "Children known up front; `null` for a collapsible node means the host asks\n`ui/tree/getChildren` when the node is expanded.",
+          "items": {
+            "$ref": "#/$defs/TreeNode"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "collapsible": {
+          "$ref": "#/$defs/Collapsible",
+          "default": "none"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CommandCall"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Run when the node is activated."
+        },
+        "contextValue": {
+          "description": "Matched by `viewItem == ...` in when-expressions of context menus.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "icon": {
+          "description": "Theme icon token.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Unique within the view.",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "tooltip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "type": "object"
+    },
+    "TreeSetModelParams": {
+      "properties": {
+        "roots": {
+          "items": {
+            "$ref": "#/$defs/TreeNode"
+          },
+          "type": "array"
+        },
+        "viewId": {
+          "description": "View declared in the plugin manifest.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "viewId",
+        "roots"
+      ],
+      "type": "object"
+    },
+    "TreeUpdateParams": {
+      "properties": {
+        "children": {
+          "description": "New children; `null` makes the host ask `ui/tree/getChildren` again.",
+          "items": {
+            "$ref": "#/$defs/TreeNode"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "nodeId": {
+          "description": "Node whose children changed; `null` for the roots.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "viewId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "viewId"
+      ],
+      "type": "object"
+    },
+    "UnsubscribeParams": {
+      "properties": {
+        "subscription": {
+          "$ref": "#/$defs/SubscriptionId"
+        }
+      },
+      "required": [
+        "subscription"
+      ],
+      "type": "object"
+    },
+    "Uri": {
+      "format": "uri",
+      "type": "string"
+    },
+    "WorkspaceFolder": {
+      "description": "A workspace folder the IDE has open.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "uri": {
+          "$ref": "#/$defs/Uri"
+        }
+      },
+      "required": [
+        "uri",
+        "name"
+      ],
+      "type": "object"
+    },
+    "WorkspaceFolderAdded": {
+      "properties": {
+        "folder": {
+          "$ref": "#/$defs/WorkspaceFolder"
+        }
+      },
+      "required": [
+        "folder"
+      ],
+      "type": "object"
+    },
+    "WorkspaceFolderRemoved": {
+      "properties": {
+        "folder": {
+          "$ref": "#/$defs/WorkspaceFolder"
+        }
+      },
+      "required": [
+        "folder"
+      ],
+      "type": "object"
+    },
+    "WorkspaceInfo": {
+      "properties": {
+        "folders": {
+          "items": {
+            "$ref": "#/$defs/WorkspaceFolder"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "folders"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "envelope": {
+    "error": {
+      "$ref": "#/$defs/ResponseError"
+    },
+    "requestId": {
+      "$ref": "#/$defs/RequestId"
+    }
+  },
+  "errorCodes": {
+    "ApiVersionMismatch": -32806,
+    "ContentModified": -32801,
+    "InterfaceVersionMismatch": -32807,
+    "InternalError": -32603,
+    "InvalidParams": -32602,
+    "InvalidRequest": -32600,
+    "MethodNotFound": -32601,
+    "NotFound": -32804,
+    "Overloaded": -32802,
+    "ParseError": -32700,
+    "PermissionDenied": -32803,
+    "PluginNotRunning": -32805,
+    "RequestCancelled": -32800
+  },
+  "events": {
+    "config.changed": {
+      "class": "state",
+      "description": "Effective values of these settings changed.",
+      "payload": {
+        "$ref": "#/$defs/ConfigChanged"
+      }
+    },
+    "document.changed": {
+      "class": "state",
+      "description": "A transaction was applied to a document.",
+      "payload": {
+        "$ref": "#/$defs/DocumentChanged"
+      }
+    },
+    "document.closed": {
+      "class": "state",
+      "description": "A document was closed in the core.",
+      "payload": {
+        "$ref": "#/$defs/DocumentClosed"
+      }
+    },
+    "document.opened": {
+      "class": "state",
+      "description": "A document was opened in the core.",
+      "payload": {
+        "$ref": "#/$defs/DocumentOpened"
+      }
+    },
+    "document.saved": {
+      "class": "state",
+      "description": "A document was written to storage.",
+      "payload": {
+        "$ref": "#/$defs/DocumentSaved"
+      }
+    },
+    "fs.changed": {
+      "class": "notification",
+      "description": "Batch of file system changes, coalesced over 50-100 ms.",
+      "payload": {
+        "$ref": "#/$defs/FsChanged"
+      }
+    },
+    "interface.availabilityChanged": {
+      "class": "state",
+      "description": "A provider of an inter-plugin interface appeared or disappeared.",
+      "payload": {
+        "$ref": "#/$defs/InterfaceAvailabilityChanged"
+      }
+    },
+    "plugin.stateChanged": {
+      "class": "state",
+      "description": "A plugin moved to another lifecycle state.",
+      "payload": {
+        "$ref": "#/$defs/PluginStateChanged"
+      }
+    },
+    "task.finished": {
+      "class": "state",
+      "description": "A task execution finished.",
+      "payload": {
+        "$ref": "#/$defs/TaskFinished"
+      }
+    },
+    "task.started": {
+      "class": "state",
+      "description": "A task execution started.",
+      "payload": {
+        "$ref": "#/$defs/TaskStarted"
+      }
+    },
+    "workspace.folderAdded": {
+      "class": "state",
+      "description": "A workspace folder was opened.",
+      "payload": {
+        "$ref": "#/$defs/WorkspaceFolderAdded"
+      }
+    },
+    "workspace.folderRemoved": {
+      "class": "state",
+      "description": "A workspace folder was closed.",
+      "payload": {
+        "$ref": "#/$defs/WorkspaceFolderRemoved"
+      }
+    }
+  },
+  "methods": {
+    "$/cancelRequest": {
+      "description": "Cancel a pending request.",
+      "direction": "both",
+      "kind": "notification",
+      "params": {
+        "$ref": "#/$defs/CancelParams"
+      }
+    },
+    "$/log": {
+      "description": "A log record for the IDE log.",
+      "direction": "pluginToHost",
+      "kind": "notification",
+      "params": {
+        "$ref": "#/$defs/LogParams"
+      }
+    },
+    "$/ping": {
+      "description": "Liveness check.",
+      "direction": "both",
+      "kind": "request",
+      "params": {
+        "type": "null"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "$/progress": {
+      "description": "Progress or partial results of a request that carried a progress token.",
+      "direction": "both",
+      "kind": "notification",
+      "params": {
+        "$ref": "#/$defs/ProgressParams"
+      }
+    },
+    "$/resync": {
+      "description": "Subscriptions were dropped: re-read state (`document/snapshot`) and subscribe again.",
+      "direction": "hostToPlugin",
+      "kind": "notification",
+      "params": {
+        "$ref": "#/$defs/ResyncParams"
+      }
+    },
+    "command/execute": {
+      "description": "Execute any command (core or another plugin) and return its result.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/CommandCall"
+      },
+      "result": true
+    },
+    "command/invoke": {
+      "description": "Run a command contributed or registered by this plugin.",
+      "direction": "hostToPlugin",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/CommandCall"
+      },
+      "result": true
+    },
+    "command/register": {
+      "description": "Register a runtime command handled by this plugin; released when the plugin stops.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/RegisterCommandParams"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "command/setContext": {
+      "description": "Set a context key used by when-expressions.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/SetContextParams"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "config/changed": {
+      "description": "Settings of the plugin's namespace changed.",
+      "direction": "hostToPlugin",
+      "kind": "notification",
+      "params": {
+        "$ref": "#/$defs/ConfigChanged"
+      }
+    },
+    "config/get": {
+      "description": "Effective value of a setting or section.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/ConfigGetParams"
+      },
+      "result": true
+    },
+    "config/update": {
+      "description": "Change a setting in the plugin's namespace.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/ConfigUpdateParams"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "document/applyEdit": {
+      "description": "Apply edits as one transaction.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/ApplyEditParams"
+      },
+      "result": {
+        "$ref": "#/$defs/ApplyEditResult"
+      }
+    },
+    "document/open": {
+      "description": "Open a document in the core without showing it.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/DocumentParams"
+      },
+      "result": {
+        "$ref": "#/$defs/DocumentSnapshot"
+      }
+    },
+    "document/read": {
+      "description": "Current text: the open buffer if any, otherwise the stored file.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/DocumentParams"
+      },
+      "result": {
+        "$ref": "#/$defs/DocumentText"
+      }
+    },
+    "document/resolveContent": {
+      "description": "Content of a read-only document in a URI scheme the plugin owns.",
+      "direction": "hostToPlugin",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/DocumentParams"
+      },
+      "result": {
+        "$ref": "#/$defs/ResolvedContent"
+      }
+    },
+    "document/save": {
+      "description": "Save an open document.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/DocumentParams"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "document/snapshot": {
+      "description": "Full state of an open document; used to resynchronize.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/DocumentParams"
+      },
+      "result": {
+        "$ref": "#/$defs/DocumentSnapshot"
+      }
+    },
+    "event/notify": {
+      "description": "Deliver an event to a subscriber.",
+      "direction": "hostToPlugin",
+      "kind": "notification",
+      "params": {
+        "$ref": "#/$defs/EventNotifyParams"
+      }
+    },
+    "event/publish": {
+      "description": "Publish an event in the plugin's own namespace.",
+      "direction": "pluginToHost",
+      "kind": "notification",
+      "params": {
+        "$ref": "#/$defs/PublishParams"
+      }
+    },
+    "event/subscribe": {
+      "description": "Subscribe to event topics.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/SubscribeParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SubscribeResult"
+      }
+    },
+    "event/unsubscribe": {
+      "description": "Cancel a subscription.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/UnsubscribeParams"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "exit": {
+      "description": "Terminate now.",
+      "direction": "hostToPlugin",
+      "kind": "notification",
+      "params": {
+        "type": "null"
+      }
+    },
+    "fs/delete": {
+      "description": "Delete a file or directory.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/FsDeleteParams"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "fs/read": {
+      "description": "Read a whole file.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/DocumentParams"
+      },
+      "result": {
+        "$ref": "#/$defs/FsReadResult"
+      }
+    },
+    "fs/readDir": {
+      "description": "Directory entries.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/DocumentParams"
+      },
+      "result": {
+        "$ref": "#/$defs/FsReadDirResult"
+      }
+    },
+    "fs/rename": {
+      "description": "Rename or move a file or directory.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/FsRenameParams"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "fs/stat": {
+      "description": "File metadata.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/DocumentParams"
+      },
+      "result": {
+        "$ref": "#/$defs/FileStat"
+      }
+    },
+    "fs/watch": {
+      "description": "Watch files; changes arrive as `fs.changed` events of the returned subscription.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/FsWatchParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SubscribeResult"
+      }
+    },
+    "fs/write": {
+      "description": "Write a whole file.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/FsWriteParams"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "initialize": {
+      "description": "Handshake: versions, capabilities, workspace, settings and locale.",
+      "direction": "hostToPlugin",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/InitializeParams"
+      },
+      "result": {
+        "$ref": "#/$defs/InitializeResult"
+      }
+    },
+    "initialized": {
+      "description": "Handshake finished; the plugin may start sending requests.",
+      "direction": "hostToPlugin",
+      "kind": "notification",
+      "params": {
+        "type": "null"
+      }
+    },
+    "lsp/middleware/request": {
+      "description": "Intercept a message the plugin declared in `lspMiddleware`.",
+      "direction": "hostToPlugin",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/LspMessageParams"
+      },
+      "result": {
+        "$ref": "#/$defs/MiddlewareResult"
+      }
+    },
+    "lsp/resolveLaunch": {
+      "description": "Command line and initialization options for a language server.",
+      "direction": "hostToPlugin",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/ResolveLaunchParams"
+      },
+      "result": {
+        "$ref": "#/$defs/LaunchSpec"
+      }
+    },
+    "lsp/sendRequest": {
+      "description": "Send a request to a running language server.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/LspMessageParams"
+      },
+      "result": true
+    },
+    "process/exited": {
+      "description": "A process started by the plugin exited; its output streams are closed before this.",
+      "direction": "hostToPlugin",
+      "kind": "notification",
+      "params": {
+        "$ref": "#/$defs/ProcessExitedParams"
+      }
+    },
+    "process/kill": {
+      "description": "Signal the process tree.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/ProcessKillParams"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "process/resize": {
+      "description": "Resize the pseudo-terminal.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/ProcessResizeParams"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "process/spawn": {
+      "description": "Start a process with piped output.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/SpawnParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SpawnResult"
+      }
+    },
+    "process/spawnPty": {
+      "description": "Start a process in a pseudo-terminal (`spec.pty` is required).",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/SpawnParams"
+      },
+      "result": {
+        "$ref": "#/$defs/SpawnPtyResult"
+      }
+    },
+    "process/write": {
+      "description": "Write to the process input.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/ProcessWriteParams"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "service/call": {
+      "description": "Call a method of an interface declared in `[[consumes]]`.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/ServiceCallParams"
+      },
+      "result": true
+    },
+    "service/invoke": {
+      "description": "Handle a call to an interface declared in `[[provides]]`.",
+      "direction": "hostToPlugin",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/ServiceInvokeParams"
+      },
+      "result": true
+    },
+    "shutdown": {
+      "description": "Stop work and release resources; the host sends `exit` afterwards.",
+      "direction": "hostToPlugin",
+      "kind": "request",
+      "params": {
+        "type": "null"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "state/restore": {
+      "description": "Optional: restore state saved by a previous instance.",
+      "direction": "hostToPlugin",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/SavedState"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "state/save": {
+      "description": "Optional: return state to hand over to the next instance.",
+      "direction": "hostToPlugin",
+      "kind": "request",
+      "params": {
+        "type": "null"
+      },
+      "result": {
+        "$ref": "#/$defs/SavedState"
+      }
+    },
+    "task/cancel": {
+      "description": "Cancel a running task execution.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/TaskExecution"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "task/provide": {
+      "description": "List the tasks of a provider type.",
+      "direction": "hostToPlugin",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/TaskProvideParams"
+      },
+      "result": {
+        "$ref": "#/$defs/TaskList"
+      }
+    },
+    "task/resolve": {
+      "description": "Fill in the process spec of a task before it runs.",
+      "direction": "hostToPlugin",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/TaskParams"
+      },
+      "result": {
+        "$ref": "#/$defs/TaskDefinition"
+      }
+    },
+    "task/run": {
+      "description": "Run a task; `task.started` and `task.finished` report its execution.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/TaskParams"
+      },
+      "result": {
+        "$ref": "#/$defs/TaskExecution"
+      }
+    },
+    "ui/fileDecorations": {
+      "description": "Set or clear badges and colors of files in trees and tabs.",
+      "direction": "pluginToHost",
+      "kind": "notification",
+      "params": {
+        "$ref": "#/$defs/FileDecorationsParams"
+      }
+    },
+    "ui/openDocument": {
+      "description": "Show a document in the editor.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/OpenDocumentInEditorParams"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "ui/progress/begin": {
+      "description": "Start showing progress of a long operation.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/ProgressBeginParams"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "ui/progress/cancel": {
+      "description": "The user cancelled a cancellable progress.",
+      "direction": "hostToPlugin",
+      "kind": "notification",
+      "params": {
+        "$ref": "#/$defs/ProgressCancelParams"
+      }
+    },
+    "ui/progress/end": {
+      "description": "Finish progress.",
+      "direction": "pluginToHost",
+      "kind": "notification",
+      "params": {
+        "$ref": "#/$defs/ProgressEndParams"
+      }
+    },
+    "ui/progress/report": {
+      "description": "Update progress.",
+      "direction": "pluginToHost",
+      "kind": "notification",
+      "params": {
+        "$ref": "#/$defs/ProgressReportParams"
+      }
+    },
+    "ui/setStatusItem": {
+      "description": "Create, update or remove a status bar item.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/SetStatusItemParams"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "ui/showInput": {
+      "description": "Ask the user for a line of text; `null` when dismissed.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/ShowInputParams"
+      },
+      "result": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "ui/showMessage": {
+      "description": "Show a notification, optionally with action buttons.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/ShowMessageParams"
+      },
+      "result": {
+        "$ref": "#/$defs/ShowMessageResult"
+      }
+    },
+    "ui/showQuickPick": {
+      "description": "Let the user pick from a list; `null` when dismissed.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/ShowQuickPickParams"
+      },
+      "result": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/QuickPickResult"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "ui/tree/getChildren": {
+      "description": "Lazily load the children of an expanded node.",
+      "direction": "hostToPlugin",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/TreeGetChildrenParams"
+      },
+      "result": {
+        "$ref": "#/$defs/TreeChildren"
+      }
+    },
+    "ui/tree/setModel": {
+      "description": "Replace the whole model of a tree view.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/TreeSetModelParams"
+      },
+      "result": {
+        "type": "null"
+      }
+    },
+    "ui/tree/update": {
+      "description": "Replace or invalidate the children of one node.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/TreeUpdateParams"
+      },
+      "result": {
+        "type": "null"
+      }
+    }
+  },
+  "title": "Kumiko Plugin Protocol",
+  "version": "0.1.0"
+}

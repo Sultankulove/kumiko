@@ -1,0 +1,51 @@
+/// Kumiko Plugin Protocol (KPP) binding for WASM plugins.
+///
+/// The world is deliberately small: every KPP method travels through `call`/`notify`
+/// (plugin to host) or `handle`/`on-notify` (host to plugin), with `params` and results as
+/// JSON strings that follow `sdk/schema/kpp.schema.json` — the same payloads process plugins
+/// send in JSON-RPC messages (ADR-010). The version follows the protocol version and becomes
+/// 1.0.0 when KPP v1 is frozen.
+package kumiko:plugin@0.1.0;
+
+interface types {
+    /// Error of a failed call: a KPP error code (see `errorCodes` in the schema), a message
+    /// and optional JSON data.
+    record rpc-error {
+        code: s32,
+        message: string,
+        data: option<string>,
+    }
+}
+
+/// Imported by the plugin: calls into the host.
+interface host {
+    use types.{rpc-error};
+
+    /// Plugin-to-host request: any KPP method; `params` and the result are JSON.
+    call: func(method: string, params: string) -> result<string, rpc-error>;
+    /// Plugin-to-host notification.
+    notify: func(method: string, params: string);
+    /// Write to a binary stream the plugin owns (e.g. process input).
+    stream-write: func(id: u32, data: list<u8>) -> result<_, rpc-error>;
+    /// Close a binary stream.
+    stream-close: func(id: u32);
+}
+
+/// Exported by the plugin: entry points for the host.
+interface plugin {
+    use types.{rpc-error};
+
+    /// Host-to-plugin request, starting with `initialize`.
+    handle: func(method: string, params: string) -> result<string, rpc-error>;
+    /// Host-to-plugin notification.
+    on-notify: func(method: string, params: string);
+    /// Data of a binary stream (e.g. process output).
+    on-stream: func(id: u32, data: list<u8>);
+    /// The host closed a binary stream (frame kind 2 for process plugins).
+    on-stream-close: func(id: u32);
+}
+
+world kumiko-plugin {
+    import host;
+    export plugin;
+}

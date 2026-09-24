@@ -310,39 +310,43 @@ enum Export {
 
 impl Instance {
     /// Calls an export with exclusive access to the live instance; a trap kills it.
+    ///
+    /// The call runs as its own task: a caller that stops waiting (a timeout, a cancelled
+    /// command) must not abandon a guest mid-execution, which would leave the instance unusable.
     async fn call(
         self: Arc<Self>,
         export: Export,
         method: String,
         params: String,
     ) -> Result<Result<String, RpcError>, WasmCallError> {
+        // Checked in the caller's task, where the call chain is known.
         let mut chain = ACTIVE.try_with(Clone::clone).unwrap_or_default();
         if chain.contains(&self.plugin) {
             return Err(WasmCallError::Reentrant(self.plugin.clone()));
         }
         chain.push(self.plugin.clone());
-        ACTIVE
-            .scope(chain, async move {
-                let mut guard = self.live.lock().await;
-                let Some(live) = guard.as_mut() else {
-                    return Err(WasmCallError::Trap("the instance is dead".into()));
-                };
-                live.store.data_mut().ticks_left = self.budget;
-                let exports = live.bindings.kumiko_plugin_plugin();
-                let result = match export {
-                    Export::Handle => exports.call_handle(&mut live.store, &method, &params).await,
-                    Export::Notify => exports
-                        .call_on_notify(&mut live.store, &method, &params)
-                        .await
-                        .map(|()| Ok(String::new())),
-                };
-                result.map_err(|error| {
-                    *guard = None;
-                    self.dead.store(true, Ordering::Relaxed);
-                    WasmCallError::Trap(format!("{error:#}"))
-                })
+        let task = tokio::spawn(ACTIVE.scope(chain, async move {
+            let mut guard = self.live.lock().await;
+            let Some(live) = guard.as_mut() else {
+                return Err(WasmCallError::Trap("the instance is dead".into()));
+            };
+            live.store.data_mut().ticks_left = self.budget;
+            let exports = live.bindings.kumiko_plugin_plugin();
+            let result = match export {
+                Export::Handle => exports.call_handle(&mut live.store, &method, &params).await,
+                Export::Notify => exports
+                    .call_on_notify(&mut live.store, &method, &params)
+                    .await
+                    .map(|()| Ok(String::new())),
+            };
+            result.map_err(|error| {
+                *guard = None;
+                self.dead.store(true, Ordering::Relaxed);
+                WasmCallError::Trap(format!("{error:#}"))
             })
-            .await
+        }));
+        task.await
+            .map_err(|error| WasmCallError::Trap(format!("the call failed: {error}")))?
     }
 }
 

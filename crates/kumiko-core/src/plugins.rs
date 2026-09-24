@@ -19,6 +19,7 @@ use kumiko_protocol::common::CommandCall;
 use kumiko_protocol::events::{InterfaceAvailabilityChanged, PluginState, PluginStateChanged};
 use kumiko_protocol::methods::lifecycle::WorkspaceInfo;
 use kumiko_protocol::{ErrorCode, ResponseError};
+use kumiko_service_api::wasm::WasmRuntime;
 use kumiko_service_api::when::WhenExpr;
 use kumiko_service_api::{BoxFuture, Event, EventSink};
 use kumiko_types::{InterfaceId, KumikoDirs, PluginId};
@@ -42,7 +43,12 @@ pub(crate) struct PluginManager {
 }
 
 impl PluginManager {
-    pub fn start(dirs: &KumikoDirs, services: Services, supervisor: SupervisorConfig) -> Self {
+    pub fn start(
+        dirs: &KumikoDirs,
+        services: Services,
+        supervisor: SupervisorConfig,
+        wasm: Option<Arc<dyn WasmRuntime>>,
+    ) -> Self {
         let store = PluginStore::new(dirs);
         let registry = Arc::new(resolve(&store));
         let api = Arc::new(CoreHostApi {
@@ -52,7 +58,13 @@ impl PluginManager {
             project: services.project.clone(),
             locale: services.locale.clone(),
         });
-        let host = PluginHost::new(registry.clone(), api, services.events.clone(), supervisor);
+        let host = PluginHost::new(
+            registry.clone(),
+            api,
+            services.events.clone(),
+            wasm,
+            supervisor,
+        );
         let manager = Self {
             store,
             services,

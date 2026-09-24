@@ -321,6 +321,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kumiko-echo"
+version = "0.1.0"
+dependencies = [
+ "kumiko-plugin-sdk",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "kumiko-editor-view"
 version = "0.1.0"
 dependencies = [
@@ -426,6 +435,9 @@ dependencies = [
  "kumiko-ipc",
  "kumiko-protocol",
  "kumiko-types",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

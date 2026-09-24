@@ -4,6 +4,7 @@ members = [
     "crates/*",
     "app/kumiko",
     "sdk/rust/kumiko-plugin-sdk",
+    "sdk/examples/*",
     "plugins/*",
     "tests",
 ]

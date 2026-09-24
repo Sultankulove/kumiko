@@ -1,3 +1,11 @@
 //! Rust SDK for Kumiko plugins (process and wasm kinds).
 //!
-//! Stub created in E0; the implementation lands in a later stage (see docs/spec, section 28).
+//! - feature `process`: [`process::Plugin`], a binary speaking KPP over stdin/stdout;
+//! - feature `wasm`: lands in E5.
+
+#[cfg(feature = "process")]
+pub mod process;
+
+pub use kumiko_protocol as protocol;
+pub use kumiko_protocol::{ErrorCode, ResponseError};
+pub use kumiko_types as types;

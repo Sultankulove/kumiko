@@ -16,6 +16,7 @@ pub use kumiko_config as config;
 pub use kumiko_documents as documents;
 pub use kumiko_events as events;
 pub use kumiko_fs as fs;
+pub use kumiko_plugin_host as plugin_host;
 pub use kumiko_project as project;
 pub use kumiko_protocol as protocol;
 pub use kumiko_resources as resources;
@@ -27,13 +28,16 @@ use kumiko_config::{ConfigService, KeymapSource};
 use kumiko_documents::{DocumentService, DocumentsConfig};
 use kumiko_events::{Delivery, EventBus, EventFilter};
 use kumiko_fs::{FsWatcher, LocalFileSystem, WatchError, WatcherConfig};
+use kumiko_plugin_host::{PluginHost, PluginRegistry, StoreError, SupervisorConfig};
 use kumiko_project::{ProjectError, ProjectService};
 use kumiko_protocol::common::WorkspaceFolder;
 use kumiko_protocol::events::{ConfigChanged, FsChanged};
 use kumiko_resources::{ResourceKind, ResourceRegistry};
 use kumiko_service_api::EventSink;
-use kumiko_types::KumikoDirs;
 use kumiko_types::paths::workspace_settings_dir;
+use kumiko_types::{KumikoDirs, PluginId};
+
+mod plugins;
 
 /// Settings the core itself reacts to.
 const WATCHER_EXCLUDE: &str = "files.watcherExclude";
@@ -47,6 +51,8 @@ pub enum CoreError {
     Watch(#[from] WatchError),
     #[error(transparent)]
     Project(#[from] ProjectError),
+    #[error(transparent)]
+    Plugin(#[from] StoreError),
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +64,8 @@ pub struct CoreOptions {
     pub locale: Option<String>,
     pub documents: DocumentsConfig,
     pub watcher: WatcherConfig,
+    /// Timeouts and restart policy of process plugins.
+    pub plugins: SupervisorConfig,
 }
 
 impl CoreOptions {
@@ -68,6 +76,7 @@ impl CoreOptions {
             locale: None,
             documents: DocumentsConfig::default(),
             watcher: WatcherConfig::default(),
+            plugins: SupervisorConfig::default(),
         }
     }
 }
@@ -82,6 +91,7 @@ struct Inner {
     documents: Arc<DocumentService>,
     project: Arc<ProjectService>,
     resources: Arc<ResourceRegistry>,
+    plugins: plugins::PluginManager,
     tasks: Mutex<Vec<JoinHandle<()>>>,
 }
 
@@ -169,6 +179,15 @@ impl CoreApi {
         project.set_exclude(&string_list(config.get(FILES_EXCLUDE, None)))?;
         let commands = Arc::new(CommandRegistry::new());
         commands.context().set("workspaceFolderCount", json!(0));
+        let services = plugins::Services {
+            commands: commands.clone(),
+            config: config.clone(),
+            project: project.clone(),
+            events: sink.clone(),
+            locale: options.locale.clone(),
+        };
+        let plugins =
+            plugins::PluginManager::start(&options.dirs, services, options.plugins.clone());
 
         let core = Self {
             inner: Arc::new(Inner {
@@ -181,6 +200,7 @@ impl CoreApi {
                 documents,
                 project,
                 resources,
+                plugins,
                 tasks: Mutex::default(),
             }),
         };
@@ -290,19 +310,7 @@ impl CoreApi {
 
     /// Effective UI locale, e.g. `ru` or `en-US`.
     pub fn locale(&self) -> String {
-        if let Some(locale) = &self.inner.options.locale {
-            return locale.clone();
-        }
-        if let Some(Value::String(locale)) = self.inner.config.get("workbench.locale", None) {
-            return locale;
-        }
-        std::env::var("LANG")
-            .ok()
-            .and_then(|lang| {
-                let lang = lang.split('.').next()?.replace('_', "-");
-                (!lang.is_empty() && lang != "C" && lang != "POSIX").then_some(lang)
-            })
-            .unwrap_or_else(|| "en".into())
+        effective_locale(self.inner.options.locale.as_deref(), &self.inner.config)
     }
 
     pub fn events(&self) -> &EventBus {
@@ -332,6 +340,57 @@ impl CoreApi {
     pub fn resources(&self) -> &ResourceRegistry {
         &self.inner.resources
     }
+
+    /// Installed plugins with their status and contributions, as of now.
+    pub fn plugins(&self) -> Arc<PluginRegistry> {
+        self.inner.plugins.registry()
+    }
+
+    /// Running process plugins: states, starts and stops.
+    pub fn plugin_host(&self) -> &PluginHost {
+        self.inner.plugins.host()
+    }
+
+    /// Installs (or upgrades) the plugin in the directory `source`; usable immediately.
+    pub async fn install_plugin(&self, source: &Path) -> Result<PluginId, CoreError> {
+        Ok(self.inner.plugins.install(source).await?)
+    }
+
+    /// Stops and deletes the plugin; its commands, keybindings and settings disappear.
+    pub async fn uninstall_plugin(&self, plugin: &PluginId) -> Result<(), CoreError> {
+        Ok(self.inner.plugins.uninstall(plugin).await?)
+    }
+
+    /// Enables or disables the plugin; a disabled plugin keeps its files but contributes nothing.
+    pub async fn set_plugin_enabled(
+        &self,
+        plugin: &PluginId,
+        enabled: bool,
+    ) -> Result<(), CoreError> {
+        Ok(self.inner.plugins.set_enabled(plugin, enabled).await?)
+    }
+
+    /// Stops plugins gracefully; call before dropping the last handle when the IDE exits.
+    pub async fn shutdown(&self) {
+        self.inner.plugins.host().stop_all().await;
+    }
+}
+
+/// The forced locale, else `workbench.locale`, else `LANG`, else `en`.
+pub(crate) fn effective_locale(forced: Option<&str>, config: &ConfigService) -> String {
+    if let Some(locale) = forced {
+        return locale.to_owned();
+    }
+    if let Some(Value::String(locale)) = config.get("workbench.locale", None) {
+        return locale;
+    }
+    std::env::var("LANG")
+        .ok()
+        .and_then(|lang| {
+            let lang = lang.split('.').next()?.replace('_', "-");
+            (!lang.is_empty() && lang != "C" && lang != "POSIX").then_some(lang)
+        })
+        .unwrap_or_else(|| "en".into())
 }
 
 /// Bindings of every keymap resource package.

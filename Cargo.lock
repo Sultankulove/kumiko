@@ -321,6 +321,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kumiko-echo"
+version = "0.1.0"
+dependencies = [
+ "kumiko-plugin-sdk",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "kumiko-editor-view"
 version = "0.1.0"
 dependencies = [
@@ -407,10 +416,20 @@ dependencies = [
 name = "kumiko-plugin-host"
 version = "0.1.0"
 dependencies = [
+ "globset",
  "kumiko-ipc",
  "kumiko-protocol",
  "kumiko-service-api",
  "kumiko-types",
+ "rustix",
+ "semver",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -420,6 +439,9 @@ dependencies = [
  "kumiko-ipc",
  "kumiko-protocol",
  "kumiko-types",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -846,6 +868,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
+name = "signal-hook-registry"
+version = "1.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
+dependencies = [
+ "errno",
+ "libc",
+]
+
+[[package]]
 name = "smallvec"
 version = "1.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -919,8 +960,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
 dependencies = [
  "bytes",
+ "libc",
+ "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "tokio-macros",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -932,6 +977,21 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "toml"
+version = "1.1.6+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "920602543f0911ab71da12c50d59701da54c196d1a2bf5cb4b75667f137a406a"
+dependencies = [
+ "indexmap",
+ "serde_core",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_parser",
+ "toml_writer",
+ "winnow",
 ]
 
 [[package]]

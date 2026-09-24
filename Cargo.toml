@@ -4,6 +4,7 @@ members = [
     "crates/*",
     "app/kumiko",
     "sdk/rust/kumiko-plugin-sdk",
+    "sdk/examples/*",
     "plugins/*",
     "tests",
 ]
@@ -44,7 +45,9 @@ kumiko-plugin-sdk = { path = "sdk/rust/kumiko-plugin-sdk" }
 # External crates. Every addition needs a license check (cargo deny) and a reason in the change description.
 cargo_metadata = "0.23"
 directories = "6.0.0"
+rustix = "1.1.5"
 schemars = "1.2.2"
+semver = { version = "1.0.28", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 thiserror = "2.0.20"
@@ -55,6 +58,7 @@ regex = "1.13.1"
 ropey = { version = "1.6.1", default-features = false, features = ["simd"] }
 tempfile = "3.27.0"
 tokio = "1.53.1"
+toml = "1"
 toml_edit = "0.25.15"
 tracing = "0.1.44"
 wit-parser = "0.259.0"

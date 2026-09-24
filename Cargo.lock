@@ -414,6 +414,7 @@ dependencies = [
  "kumiko-types",
  "semver",
  "serde",
+ "tempfile",
  "thiserror",
  "toml",
 ]

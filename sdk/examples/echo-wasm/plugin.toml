@@ -1,0 +1,34 @@
+# Test fixture of the WASM host (spec, section 28, E5) and a minimal WASM plugin example.
+# Build: cargo build -p kumiko-echo-wasm --target wasm32-wasip2 → plugin.wasm.
+[plugin]
+id = "kumiko.echo-wasm"
+name = "Echo (WASM)"
+version = "0.1.0"
+api = "^0.1"
+kind = "wasm"
+entry = "plugin.wasm"
+activation = ["onCommand:echo-wasm.*"]
+
+[[contributes.commands]]
+id = "echo-wasm.say"
+title = "Echo (WASM): say"
+
+[[contributes.commands]]
+id = "echo-wasm.count"
+title = "Echo (WASM): count calls of this instance"
+
+[[contributes.commands]]
+id = "echo-wasm.trap"
+title = "Echo (WASM): trap"
+
+[[contributes.commands]]
+id = "echo-wasm.spin"
+title = "Echo (WASM): loop forever"
+
+[[contributes.commands]]
+id = "echo-wasm.grow"
+title = "Echo (WASM): allocate MiB of memory"
+
+[[contributes.commands]]
+id = "echo-wasm.host"
+title = "Echo (WASM): call a host method"

@@ -61,6 +61,9 @@ tokio = "1.53.1"
 toml = "1"
 toml_edit = "0.25.15"
 tracing = "0.1.44"
+wasmtime = "49.0.0"
+wasmtime-wasi = "49.0.0"
+wit-bindgen = "0.62.0"
 wit-parser = "0.259.0"
 
 [workspace.lints.rust]

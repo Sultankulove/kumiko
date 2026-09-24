@@ -204,7 +204,7 @@ fn router(
     let service_peer = peer.clone();
     Router::new()
         .on_request::<Initialize, _, _>(move |params| {
-            let result = if compatible(&params.api_version, PROTOCOL_VERSION) {
+            let result = if crate::version::compatible(&params.api_version, PROTOCOL_VERSION) {
                 *lock(&init_state.init) = Some(Arc::new(params));
                 Ok(InitializeResult {
                     api_version: PROTOCOL_VERSION.to_owned(),
@@ -265,31 +265,4 @@ fn router(
         })
         .on_request::<Shutdown, _, _>(|()| std::future::ready(Ok(())))
         .on_notification::<Exit, _>(move |()| state.exit.notify_one())
-}
-
-/// Same major version; in 0.x the minor version must match too (semver caret rules).
-fn compatible(host: &str, plugin: &str) -> bool {
-    let parts = |v: &str| {
-        let mut numbers = v.split('.').map(|n| n.parse::<u64>().ok());
-        (numbers.next().flatten(), numbers.next().flatten())
-    };
-    match (parts(host), parts(plugin)) {
-        ((Some(0), Some(a)), (Some(0), Some(b))) => a == b,
-        ((Some(a), Some(_)), (Some(b), Some(_))) => a == b,
-        _ => false,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::compatible;
-
-    #[test]
-    fn version_compatibility() {
-        assert!(compatible("0.1.0", "0.1.7"));
-        assert!(!compatible("0.2.0", "0.1.0"));
-        assert!(compatible("1.4.0", "1.0.0"));
-        assert!(!compatible("2.0.0", "1.9.0"));
-        assert!(!compatible("one", "0.1.0"));
-    }
 }

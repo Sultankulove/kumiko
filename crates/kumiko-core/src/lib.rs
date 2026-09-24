@@ -28,7 +28,7 @@ use kumiko_config::{ConfigService, KeymapSource};
 use kumiko_documents::{DocumentService, DocumentsConfig};
 use kumiko_events::{Delivery, EventBus, EventFilter};
 use kumiko_fs::{FsWatcher, LocalFileSystem, WatchError, WatcherConfig};
-use kumiko_plugin_host::PluginRegistry;
+use kumiko_plugin_host::{PluginHost, PluginRegistry, SupervisorConfig};
 use kumiko_project::{ProjectError, ProjectService};
 use kumiko_protocol::common::WorkspaceFolder;
 use kumiko_protocol::events::{ConfigChanged, FsChanged};
@@ -62,6 +62,8 @@ pub struct CoreOptions {
     pub locale: Option<String>,
     pub documents: DocumentsConfig,
     pub watcher: WatcherConfig,
+    /// Timeouts and restart policy of process plugins.
+    pub plugins: SupervisorConfig,
 }
 
 impl CoreOptions {
@@ -72,6 +74,7 @@ impl CoreOptions {
             locale: None,
             documents: DocumentsConfig::default(),
             watcher: WatcherConfig::default(),
+            plugins: SupervisorConfig::default(),
         }
     }
 }
@@ -87,6 +90,7 @@ struct Inner {
     project: Arc<ProjectService>,
     resources: Arc<ResourceRegistry>,
     plugins: Arc<PluginRegistry>,
+    plugin_host: PluginHost,
     tasks: Mutex<Vec<JoinHandle<()>>>,
 }
 
@@ -174,7 +178,14 @@ impl CoreApi {
         project.set_exclude(&string_list(config.get(FILES_EXCLUDE, None)))?;
         let commands = Arc::new(CommandRegistry::new());
         commands.context().set("workspaceFolderCount", json!(0));
-        let plugins = Arc::new(plugins::load(&options.dirs, &commands, &config));
+        let services = plugins::Services {
+            commands: commands.clone(),
+            config: config.clone(),
+            project: project.clone(),
+            events: sink.clone(),
+            locale: options.locale.clone(),
+        };
+        let plugins = plugins::load(&options.dirs, &services, options.plugins.clone());
 
         let core = Self {
             inner: Arc::new(Inner {
@@ -187,7 +198,8 @@ impl CoreApi {
                 documents,
                 project,
                 resources,
-                plugins,
+                plugins: plugins.registry,
+                plugin_host: plugins.host,
                 tasks: Mutex::default(),
             }),
         };
@@ -297,19 +309,7 @@ impl CoreApi {
 
     /// Effective UI locale, e.g. `ru` or `en-US`.
     pub fn locale(&self) -> String {
-        if let Some(locale) = &self.inner.options.locale {
-            return locale.clone();
-        }
-        if let Some(Value::String(locale)) = self.inner.config.get("workbench.locale", None) {
-            return locale;
-        }
-        std::env::var("LANG")
-            .ok()
-            .and_then(|lang| {
-                let lang = lang.split('.').next()?.replace('_', "-");
-                (!lang.is_empty() && lang != "C" && lang != "POSIX").then_some(lang)
-            })
-            .unwrap_or_else(|| "en".into())
+        effective_locale(self.inner.options.locale.as_deref(), &self.inner.config)
     }
 
     pub fn events(&self) -> &EventBus {
@@ -344,6 +344,33 @@ impl CoreApi {
     pub fn plugins(&self) -> &PluginRegistry {
         &self.inner.plugins
     }
+
+    /// Running process plugins: states, starts and stops.
+    pub fn plugin_host(&self) -> &PluginHost {
+        &self.inner.plugin_host
+    }
+
+    /// Stops plugins gracefully; call before dropping the last handle when the IDE exits.
+    pub async fn shutdown(&self) {
+        self.inner.plugin_host.stop_all().await;
+    }
+}
+
+/// The forced locale, else `workbench.locale`, else `LANG`, else `en`.
+pub(crate) fn effective_locale(forced: Option<&str>, config: &ConfigService) -> String {
+    if let Some(locale) = forced {
+        return locale.to_owned();
+    }
+    if let Some(Value::String(locale)) = config.get("workbench.locale", None) {
+        return locale;
+    }
+    std::env::var("LANG")
+        .ok()
+        .and_then(|lang| {
+            let lang = lang.split('.').next()?.replace('_', "-");
+            (!lang.is_empty() && lang != "C" && lang != "POSIX").then_some(lang)
+        })
+        .unwrap_or_else(|| "en".into())
 }
 
 /// Bindings of every keymap resource package.

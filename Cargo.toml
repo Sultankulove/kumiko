@@ -45,6 +45,7 @@ kumiko-plugin-sdk = { path = "sdk/rust/kumiko-plugin-sdk" }
 # External crates. Every addition needs a license check (cargo deny) and a reason in the change description.
 cargo_metadata = "0.23"
 directories = "6.0.0"
+rustix = "1.1.5"
 schemars = "1.2.2"
 semver = { version = "1.0.28", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }

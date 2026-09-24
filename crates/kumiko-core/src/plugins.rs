@@ -1,7 +1,7 @@
-//! Plugins at startup: resolve installed plugins and register what the ready ones contribute
-//! (spec, section 13: contributions are registered before any plugin code runs).
+//! Plugins in the core: resolve installed plugins at startup, register what the ready ones
+//! contribute before any plugin code runs (spec, section 13), and serve the Plugin Host.
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use serde_json::{Value, json};
 
@@ -9,16 +9,62 @@ use kumiko_commands::{CommandError, CommandInfo, CommandRegistry, Owner};
 use kumiko_config::keymap::{KeySequence, Keybinding};
 use kumiko_config::{ConfigService, KeymapSource};
 use kumiko_plugin_host::{
-    PluginEntry, PluginRegistry, PluginStatus, PluginStore, protocol_version,
+    HostApi, Manifest, PluginEntry, PluginHost, PluginRegistry, PluginStatus, PluginStore, Session,
+    SupervisorConfig, protocol_version,
 };
+use kumiko_project::ProjectService;
+use kumiko_protocol::common::CommandCall;
+use kumiko_protocol::events::PluginState;
+use kumiko_protocol::methods::lifecycle::WorkspaceInfo;
+use kumiko_protocol::{ErrorCode, ResponseError};
 use kumiko_service_api::when::WhenExpr;
+use kumiko_service_api::{BoxFuture, EventSink};
 use kumiko_types::{KumikoDirs, PluginId};
+
+pub(crate) struct Services {
+    pub commands: Arc<CommandRegistry>,
+    pub config: Arc<ConfigService>,
+    pub project: Arc<ProjectService>,
+    pub events: Arc<dyn EventSink>,
+    /// Locale forced by the options; otherwise it follows the settings.
+    pub locale: Option<String>,
+}
+
+pub(crate) struct Plugins {
+    pub registry: Arc<PluginRegistry>,
+    pub host: PluginHost,
+}
 
 pub(crate) fn load(
     dirs: &KumikoDirs,
-    commands: &CommandRegistry,
-    config: &ConfigService,
-) -> PluginRegistry {
+    services: &Services,
+    supervisor: SupervisorConfig,
+) -> Plugins {
+    let registry = resolve(dirs);
+    let api = Arc::new(CoreHostApi {
+        // Weak: command handlers own the host, the host must not own the commands.
+        commands: Arc::downgrade(&services.commands),
+        config: services.config.clone(),
+        project: services.project.clone(),
+        locale: services.locale.clone(),
+    });
+    let host = PluginHost::new(&registry, api, services.events.clone(), supervisor);
+
+    register_commands(&registry, &services.commands, &host);
+    set_context_keys(&registry, &services.commands);
+    services
+        .config
+        .set_keymap_source(KeymapSource::Plugin, keybindings(&registry));
+    for entry in registry.ready() {
+        register_settings(entry, &services.config);
+    }
+    Plugins {
+        registry: Arc::new(registry),
+        host,
+    }
+}
+
+fn resolve(dirs: &KumikoDirs) -> PluginRegistry {
     let scan = PluginStore::new(dirs).scan();
     for problem in &scan.problems {
         tracing::warn!("plugin store: {problem}");
@@ -32,17 +78,10 @@ pub(crate) fn load(
     for problem in registry.problems() {
         tracing::warn!("plugins: {problem}");
     }
-
-    register_commands(&registry, commands);
-    set_context_keys(&registry, commands);
-    config.set_keymap_source(KeymapSource::Plugin, keybindings(&registry));
-    for entry in registry.ready() {
-        register_settings(entry, config);
-    }
     registry
 }
 
-fn register_commands(registry: &PluginRegistry, commands: &CommandRegistry) {
+fn register_commands(registry: &PluginRegistry, commands: &CommandRegistry, host: &PluginHost) {
     for (plugin, command) in registry.commands() {
         let info = CommandInfo {
             id: command.id.clone(),
@@ -53,14 +92,18 @@ fn register_commands(registry: &PluginRegistry, commands: &CommandRegistry) {
                 .as_deref()
                 .and_then(|w| WhenExpr::parse(w).ok()),
         };
-        // Until the plugin bridge exists, the command is visible but cannot run.
-        let owner = plugin.clone();
-        let handler = Arc::new(move |_args: Vec<Value>| -> kumiko_commands::CommandFuture {
-            let owner = owner.clone();
+        // The first call starts the plugin; the host waits for its handshake.
+        let (owner, command_id, host) = (plugin.clone(), command.id.clone(), host.clone());
+        let handler = Arc::new(move |args: Vec<Value>| -> kumiko_commands::CommandFuture {
+            let (owner, host) = (owner.clone(), host.clone());
+            let call = CommandCall {
+                command: command_id.clone(),
+                args,
+            };
             Box::pin(async move {
-                Err(CommandError::Failed(format!(
-                    "plugin {owner} is not running"
-                )))
+                host.invoke_command(&owner, call)
+                    .await
+                    .map_err(|error| CommandError::Failed(error.message))
             })
         });
         if let Err(error) = commands.register(info, handler) {
@@ -151,5 +194,73 @@ fn register_settings(entry: &PluginEntry, config: &ConfigService) {
     }
     if let Err(error) = config.register_schema(plugin.as_str(), &schema) {
         tracing::warn!(%plugin, path = %path.display(), "settings schema: {error}");
+    }
+}
+
+/// The core as the Plugin Host sees it.
+struct CoreHostApi {
+    commands: Weak<CommandRegistry>,
+    config: Arc<ConfigService>,
+    project: Arc<ProjectService>,
+    locale: Option<String>,
+}
+
+impl HostApi for CoreHostApi {
+    fn execute_command(
+        &self,
+        _caller: &PluginId,
+        call: CommandCall,
+    ) -> BoxFuture<'static, Result<Value, ResponseError>> {
+        let commands = self.commands.upgrade();
+        Box::pin(async move {
+            let Some(commands) = commands else {
+                return Err(ResponseError::new(
+                    ErrorCode::InternalError,
+                    "the core is stopping",
+                ));
+            };
+            commands
+                .execute(&call.command, call.args)
+                .await
+                .map_err(|error| {
+                    let code = match &error {
+                        CommandError::NotFound(_) => ErrorCode::NotFound,
+                        CommandError::Disabled(_) | CommandError::AlreadyRegistered(_) => {
+                            ErrorCode::InvalidRequest
+                        }
+                        CommandError::Failed(_) => ErrorCode::InternalError,
+                    };
+                    ResponseError::new(code, error.to_string())
+                })
+        })
+    }
+
+    fn set_context(&self, key: String, value: Value) {
+        if let Some(commands) = self.commands.upgrade() {
+            commands.context().set(key, value);
+        }
+    }
+
+    fn session(&self, plugin: &Manifest) -> Session {
+        Session {
+            workspace: WorkspaceInfo {
+                folders: self.project.folders(),
+            },
+            config: Value::Object(self.config.section(plugin.namespace(), None)),
+            locale: crate::effective_locale(self.locale.as_deref(), &self.config),
+        }
+    }
+
+    fn state_changed(&self, plugin: &Manifest, state: PluginState) {
+        let Some(commands) = self.commands.upgrade() else {
+            return;
+        };
+        let context = commands.context();
+        let running = state == PluginState::Running;
+        context.set(format!("plugin.{}.running", plugin.id()), json!(running));
+        if !running {
+            // Context keys the plugin set at runtime die with its process.
+            context.remove_prefix(&format!("{}.", plugin.namespace()));
+        }
     }
 }

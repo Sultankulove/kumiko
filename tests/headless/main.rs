@@ -6,3 +6,4 @@
 
 mod e3_documents;
 mod e4_plugins;
+mod e4_process;

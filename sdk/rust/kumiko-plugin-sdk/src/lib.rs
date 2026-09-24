@@ -6,6 +6,9 @@
 #[cfg(feature = "process")]
 pub mod process;
 
+#[cfg(feature = "process")]
+pub use kumiko_ipc::RpcError;
+
 pub use kumiko_protocol as protocol;
 pub use kumiko_protocol::{ErrorCode, ResponseError};
 pub use kumiko_types as types;

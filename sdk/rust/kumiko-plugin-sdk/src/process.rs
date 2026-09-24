@@ -32,11 +32,14 @@ use kumiko_protocol::methods::command::{
 use kumiko_protocol::methods::lifecycle::{
     Exit, Initialize, InitializeParams, InitializeResult, Initialized, PluginCapabilities, Shutdown,
 };
+use kumiko_protocol::methods::service::{ServiceCall, ServiceCallParams, ServiceInvoke};
 use kumiko_protocol::{ErrorCode, ResponseError};
-use kumiko_types::{CommandId, PluginId};
+use kumiko_types::{CommandId, InterfaceId, PluginId};
 
 type CommandFuture = Pin<Box<dyn Future<Output = Result<Value, ResponseError>> + Send>>;
 type CommandFn = Arc<dyn Fn(Context, Vec<Value>) -> CommandFuture + Send + Sync>;
+type InterfaceFn = Arc<dyn Fn(Context, PluginId, Value) -> CommandFuture + Send + Sync>;
+type Interfaces = HashMap<(String, String), InterfaceFn>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SdkError {
@@ -78,6 +81,21 @@ impl Context {
             .await
     }
 
+    /// Calls a method of an interface declared in `[[consumes]]`; the core picks the provider.
+    pub async fn call_interface(
+        &self,
+        interface: InterfaceId,
+        method: impl Into<String>,
+        params: Value,
+    ) -> Result<Value, RpcError> {
+        let call = ServiceCallParams {
+            interface,
+            method: method.into(),
+            params,
+        };
+        self.peer.request::<ServiceCall>(&call).await
+    }
+
     /// Sets a context key; the host accepts keys in the plugin's own namespace only.
     pub async fn set_context(&self, key: impl Into<String>, value: Value) -> Result<(), RpcError> {
         self.peer
@@ -93,6 +111,7 @@ impl Context {
 #[derive(Default)]
 pub struct Plugin {
     commands: HashMap<String, CommandFn>,
+    interfaces: Interfaces,
     capabilities: PluginCapabilities,
 }
 
@@ -123,6 +142,20 @@ impl Plugin {
         self
     }
 
+    /// Handles a method of an interface declared in `[[provides]]` (spec, section 14). The
+    /// handler gets the calling plugin and the call's params.
+    pub fn interface<F, Fut>(mut self, interface: &str, method: &str, handler: F) -> Self
+    where
+        F: Fn(Context, PluginId, Value) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Value, ResponseError>> + Send + 'static,
+    {
+        let handler: InterfaceFn =
+            Arc::new(move |ctx, caller, params| Box::pin(handler(ctx, caller, params)));
+        self.interfaces
+            .insert((interface.to_owned(), method.to_owned()), handler);
+        self
+    }
+
     /// Declares optional host-to-plugin methods the plugin handles.
     pub fn capabilities(mut self, capabilities: PluginCapabilities) -> Self {
         self.capabilities = capabilities;
@@ -145,10 +178,11 @@ impl Plugin {
             exit: Notify::new(),
         });
         let commands = Arc::new(self.commands);
+        let interfaces = Arc::new(self.interfaces);
         let capabilities = self.capabilities;
         let router_state = state.clone();
         let peer = Peer::spawn(reader, writer, PeerConfig::default(), move |peer| {
-            router(peer, router_state, commands, capabilities)
+            router(peer, router_state, commands, interfaces, capabilities)
         });
         tokio::select! {
             () = state.exit.notified() => Ok(()),
@@ -161,10 +195,13 @@ fn router(
     peer: Peer,
     state: Arc<State>,
     commands: Arc<HashMap<String, CommandFn>>,
+    interfaces: Arc<Interfaces>,
     capabilities: PluginCapabilities,
 ) -> Router {
     let init_state = state.clone();
     let invoke_state = state.clone();
+    let service_state = state.clone();
+    let service_peer = peer.clone();
     Router::new()
         .on_request::<Initialize, _, _>(move |params| {
             let result = if compatible(&params.api_version, PROTOCOL_VERSION) {
@@ -203,6 +240,27 @@ fn router(
                     ));
                 };
                 handler(Context { peer, init }, call.args).await
+            }
+        })
+        .on_request::<ServiceInvoke, _, _>(move |call| {
+            let init = lock(&service_state.init).clone();
+            let key = (call.interface.to_string(), call.method.clone());
+            let handler = interfaces.get(&key).cloned();
+            let peer = service_peer.clone();
+            async move {
+                let Some(init) = init else {
+                    return Err(ResponseError::new(
+                        ErrorCode::InvalidRequest,
+                        "not initialized",
+                    ));
+                };
+                let Some(handler) = handler else {
+                    return Err(ResponseError::new(
+                        ErrorCode::MethodNotFound,
+                        format!("{}.{} is not provided by this plugin", key.0, key.1),
+                    ));
+                };
+                handler(Context { peer, init }, call.caller, call.params).await
             }
         })
         .on_request::<Shutdown, _, _>(|()| std::future::ready(Ok(())))

@@ -48,6 +48,13 @@ impl PluginEntry {
     }
 }
 
+/// Ready plugins that differ between two registries.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct RegistryDiff {
+    pub removed: Vec<PluginId>,
+    pub added: Vec<PluginId>,
+}
+
 /// Installed plugins with their status and the contributions of the ready ones.
 #[derive(Debug, Default)]
 pub struct PluginRegistry {
@@ -156,6 +163,27 @@ impl PluginRegistry {
                     .or_default()
                     .push(id.clone());
             }
+        }
+    }
+
+    /// Ready plugins that stop being ready (`removed`) or become ready (`added`) when `self` is
+    /// replaced by `new`. A plugin whose version or directory changed is in both lists.
+    pub fn diff(&self, new: &PluginRegistry) -> RegistryDiff {
+        let changed = |from: &PluginRegistry, to: &PluginRegistry| {
+            from.ready()
+                .filter(|entry| {
+                    !to.get(entry.manifest().id()).is_some_and(|other| {
+                        other.is_ready()
+                            && other.manifest().plugin.version == entry.manifest().plugin.version
+                            && other.plugin.dir == entry.plugin.dir
+                    })
+                })
+                .map(|entry| entry.manifest().id().clone())
+                .collect()
+        };
+        RegistryDiff {
+            removed: changed(self, new),
+            added: changed(new, self),
         }
     }
 
@@ -370,6 +398,29 @@ mod tests {
         assert_eq!(registry.problems().len(), 1);
         assert!(registry.problems()[0].contains("already contributed by test.echo"));
         assert_eq!(registry.keybindings().count(), 1);
+    }
+
+    #[test]
+    fn diff_between_registries() {
+        let ids = |list: &[PluginId]| list.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+        let old = resolve(vec![
+            plugin("test.keep", "1.0.0", ""),
+            plugin("test.gone", "1.0.0", ""),
+            plugin("test.upgrade", "1.0.0", ""),
+        ]);
+        let mut off = plugin("test.keep2", "1.0.0", "");
+        off.enabled = false;
+        let new = resolve(vec![
+            plugin("test.keep", "1.0.0", ""),
+            plugin("test.upgrade", "2.0.0", ""),
+            plugin("test.new", "1.0.0", ""),
+            off,
+        ]);
+        let diff = old.diff(&new);
+        assert_eq!(ids(&diff.removed), ["test.gone", "test.upgrade"]);
+        assert_eq!(ids(&diff.added), ["test.new", "test.upgrade"]);
+        assert_eq!(PluginRegistry::default().diff(&old).added.len(), 3);
+        assert_eq!(old.diff(&PluginRegistry::default()).removed.len(), 3);
     }
 
     #[test]

@@ -28,14 +28,14 @@ use kumiko_config::{ConfigService, KeymapSource};
 use kumiko_documents::{DocumentService, DocumentsConfig};
 use kumiko_events::{Delivery, EventBus, EventFilter};
 use kumiko_fs::{FsWatcher, LocalFileSystem, WatchError, WatcherConfig};
-use kumiko_plugin_host::{PluginHost, PluginRegistry, SupervisorConfig};
+use kumiko_plugin_host::{PluginHost, PluginRegistry, StoreError, SupervisorConfig};
 use kumiko_project::{ProjectError, ProjectService};
 use kumiko_protocol::common::WorkspaceFolder;
 use kumiko_protocol::events::{ConfigChanged, FsChanged};
 use kumiko_resources::{ResourceKind, ResourceRegistry};
 use kumiko_service_api::EventSink;
-use kumiko_types::KumikoDirs;
 use kumiko_types::paths::workspace_settings_dir;
+use kumiko_types::{KumikoDirs, PluginId};
 
 mod plugins;
 
@@ -51,6 +51,8 @@ pub enum CoreError {
     Watch(#[from] WatchError),
     #[error(transparent)]
     Project(#[from] ProjectError),
+    #[error(transparent)]
+    Plugin(#[from] StoreError),
 }
 
 #[derive(Debug, Clone)]
@@ -89,8 +91,7 @@ struct Inner {
     documents: Arc<DocumentService>,
     project: Arc<ProjectService>,
     resources: Arc<ResourceRegistry>,
-    plugins: Arc<PluginRegistry>,
-    plugin_host: PluginHost,
+    plugins: plugins::PluginManager,
     tasks: Mutex<Vec<JoinHandle<()>>>,
 }
 
@@ -185,7 +186,8 @@ impl CoreApi {
             events: sink.clone(),
             locale: options.locale.clone(),
         };
-        let plugins = plugins::load(&options.dirs, &services, options.plugins.clone());
+        let plugins =
+            plugins::PluginManager::start(&options.dirs, services, options.plugins.clone());
 
         let core = Self {
             inner: Arc::new(Inner {
@@ -198,8 +200,7 @@ impl CoreApi {
                 documents,
                 project,
                 resources,
-                plugins: plugins.registry,
-                plugin_host: plugins.host,
+                plugins,
                 tasks: Mutex::default(),
             }),
         };
@@ -340,19 +341,38 @@ impl CoreApi {
         &self.inner.resources
     }
 
-    /// Installed plugins resolved at startup, with their status and contributions.
-    pub fn plugins(&self) -> &PluginRegistry {
-        &self.inner.plugins
+    /// Installed plugins with their status and contributions, as of now.
+    pub fn plugins(&self) -> Arc<PluginRegistry> {
+        self.inner.plugins.registry()
     }
 
     /// Running process plugins: states, starts and stops.
     pub fn plugin_host(&self) -> &PluginHost {
-        &self.inner.plugin_host
+        self.inner.plugins.host()
+    }
+
+    /// Installs (or upgrades) the plugin in the directory `source`; usable immediately.
+    pub async fn install_plugin(&self, source: &Path) -> Result<PluginId, CoreError> {
+        Ok(self.inner.plugins.install(source).await?)
+    }
+
+    /// Stops and deletes the plugin; its commands, keybindings and settings disappear.
+    pub async fn uninstall_plugin(&self, plugin: &PluginId) -> Result<(), CoreError> {
+        Ok(self.inner.plugins.uninstall(plugin).await?)
+    }
+
+    /// Enables or disables the plugin; a disabled plugin keeps its files but contributes nothing.
+    pub async fn set_plugin_enabled(
+        &self,
+        plugin: &PluginId,
+        enabled: bool,
+    ) -> Result<(), CoreError> {
+        Ok(self.inner.plugins.set_enabled(plugin, enabled).await?)
     }
 
     /// Stops plugins gracefully; call before dropping the last handle when the IDE exits.
     pub async fn shutdown(&self) {
-        self.inner.plugin_host.stop_all().await;
+        self.inner.plugins.host().stop_all().await;
     }
 }
 

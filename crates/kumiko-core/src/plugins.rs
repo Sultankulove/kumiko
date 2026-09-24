@@ -1,6 +1,8 @@
-//! Plugins in the core: resolve installed plugins at startup, register what the ready ones
-//! contribute before any plugin code runs (spec, section 13), and serve the Plugin Host.
+//! Plugins in the core: resolve installed plugins, register what the ready ones contribute
+//! before any plugin code runs (spec, section 13), apply installs, removals and enable flags at
+//! runtime, and serve the Plugin Host.
 
+use std::path::Path;
 use std::sync::{Arc, Weak};
 
 use serde_json::{Value, json};
@@ -9,17 +11,17 @@ use kumiko_commands::{CommandError, CommandInfo, CommandRegistry, Owner};
 use kumiko_config::keymap::{KeySequence, Keybinding};
 use kumiko_config::{ConfigService, KeymapSource};
 use kumiko_plugin_host::{
-    HostApi, Manifest, PluginEntry, PluginHost, PluginRegistry, PluginStatus, PluginStore, Session,
-    SupervisorConfig, protocol_version,
+    HostApi, Manifest, PluginEntry, PluginHost, PluginRegistry, PluginStatus, PluginStore,
+    RegistryDiff, Session, StoreError, SupervisorConfig, protocol_version,
 };
 use kumiko_project::ProjectService;
 use kumiko_protocol::common::CommandCall;
-use kumiko_protocol::events::PluginState;
+use kumiko_protocol::events::{InterfaceAvailabilityChanged, PluginState, PluginStateChanged};
 use kumiko_protocol::methods::lifecycle::WorkspaceInfo;
 use kumiko_protocol::{ErrorCode, ResponseError};
 use kumiko_service_api::when::WhenExpr;
-use kumiko_service_api::{BoxFuture, EventSink};
-use kumiko_types::{KumikoDirs, PluginId};
+use kumiko_service_api::{BoxFuture, Event, EventSink};
+use kumiko_types::{InterfaceId, KumikoDirs, PluginId};
 
 pub(crate) struct Services {
     pub commands: Arc<CommandRegistry>,
@@ -30,42 +32,135 @@ pub(crate) struct Services {
     pub locale: Option<String>,
 }
 
-pub(crate) struct Plugins {
-    pub registry: Arc<PluginRegistry>,
-    pub host: PluginHost,
+/// Installed plugins and everything the core registered for them.
+pub(crate) struct PluginManager {
+    store: PluginStore,
+    services: Services,
+    host: PluginHost,
+    /// Serializes install, uninstall, enable and disable.
+    operation: tokio::sync::Mutex<()>,
 }
 
-pub(crate) fn load(
-    dirs: &KumikoDirs,
-    services: &Services,
-    supervisor: SupervisorConfig,
-) -> Plugins {
-    let registry = resolve(dirs);
-    let api = Arc::new(CoreHostApi {
-        // Weak: command handlers own the host, the host must not own the commands.
-        commands: Arc::downgrade(&services.commands),
-        config: services.config.clone(),
-        project: services.project.clone(),
-        locale: services.locale.clone(),
-    });
-    let host = PluginHost::new(&registry, api, services.events.clone(), supervisor);
-
-    register_commands(&registry, &services.commands, &host);
-    set_context_keys(&registry, &services.commands);
-    services
-        .config
-        .set_keymap_source(KeymapSource::Plugin, keybindings(&registry));
-    for entry in registry.ready() {
-        register_settings(entry, &services.config);
+impl PluginManager {
+    pub fn start(dirs: &KumikoDirs, services: Services, supervisor: SupervisorConfig) -> Self {
+        let store = PluginStore::new(dirs);
+        let registry = Arc::new(resolve(&store));
+        let api = Arc::new(CoreHostApi {
+            // Weak: command handlers own the host, the host must not own the commands.
+            commands: Arc::downgrade(&services.commands),
+            config: services.config.clone(),
+            project: services.project.clone(),
+            locale: services.locale.clone(),
+        });
+        let host = PluginHost::new(registry.clone(), api, services.events.clone(), supervisor);
+        let manager = Self {
+            store,
+            services,
+            host,
+            operation: tokio::sync::Mutex::new(()),
+        };
+        let empty = PluginRegistry::default();
+        manager.apply(&empty, &registry, &empty.diff(&registry));
+        manager
     }
-    Plugins {
-        registry: Arc::new(registry),
-        host,
+
+    pub fn registry(&self) -> Arc<PluginRegistry> {
+        self.host.registry()
+    }
+
+    pub fn host(&self) -> &PluginHost {
+        &self.host
+    }
+
+    /// Installs (or upgrades) the plugin in `source` and makes it available right away.
+    pub async fn install(&self, source: &Path) -> Result<PluginId, StoreError> {
+        let _operation = self.operation.lock().await;
+        let installed = self.store.install(source)?;
+        self.reload().await;
+        Ok(installed.manifest.id().clone())
+    }
+
+    /// Stops the plugin, removes its contributions and deletes it.
+    pub async fn uninstall(&self, plugin: &PluginId) -> Result<(), StoreError> {
+        let _operation = self.operation.lock().await;
+        // Stop before deleting, so the process is not left running from a removed directory.
+        self.host.stop(plugin).await;
+        self.store.uninstall(plugin)?;
+        self.reload().await;
+        Ok(())
+    }
+
+    pub async fn set_enabled(&self, plugin: &PluginId, enabled: bool) -> Result<(), StoreError> {
+        let _operation = self.operation.lock().await;
+        self.store.set_enabled(plugin, enabled)?;
+        self.reload().await;
+        Ok(())
+    }
+
+    /// Re-reads the store and applies the difference: plugins that stopped being ready are
+    /// stopped and unregistered, new ones registered. Dependents follow their dependencies.
+    async fn reload(&self) {
+        let old = self.host.registry();
+        let new = Arc::new(resolve(&self.store));
+        let diff = self.host.replace_registry(new.clone()).await;
+        self.apply(&old, &new, &diff);
+    }
+
+    fn apply(&self, old: &PluginRegistry, new: &PluginRegistry, diff: &RegistryDiff) {
+        let Services {
+            commands,
+            config,
+            events,
+            ..
+        } = &self.services;
+        let context = commands.context();
+        for plugin in &diff.removed {
+            commands.unregister_owner(&Owner::Plugin(plugin.clone()));
+            config.unregister_schema(plugin.as_str());
+            context.set(format!("plugin.{plugin}.running"), Value::Null);
+            if let Some(entry) = old.get(plugin) {
+                context.remove_prefix(&format!("{}.", entry.manifest().namespace()));
+            }
+        }
+        register_commands(new, commands, &self.host, &diff.added);
+        for plugin in &diff.added {
+            if let Some(entry) = new.get(plugin) {
+                register_settings(entry, config);
+            }
+            context.set(format!("plugin.{plugin}.running"), json!(false));
+        }
+        config.set_keymap_source(KeymapSource::Plugin, keybindings(new));
+        update_interfaces(old, new, commands, events.as_ref());
+
+        for plugin in diff.removed.iter().filter(|p| !diff.added.contains(p)) {
+            let (state, reason) = match new.get(plugin).map(|e| &e.status) {
+                Some(PluginStatus::Disabled) => (PluginState::Disabled, None),
+                Some(PluginStatus::Incompatible(reasons)) => {
+                    (PluginState::Installed, Some(reasons.join("; ")))
+                }
+                // Uninstalled: nothing is left to have a state.
+                Some(PluginStatus::Ready) | None => continue,
+            };
+            let changed = PluginStateChanged {
+                plugin: plugin.clone(),
+                state,
+                reason,
+            };
+            events.publish(Event::core(&changed));
+        }
+        for plugin in &diff.added {
+            let changed = PluginStateChanged {
+                plugin: plugin.clone(),
+                state: PluginState::Enabled,
+                reason: None,
+            };
+            events.publish(Event::core(&changed));
+        }
     }
 }
 
-fn resolve(dirs: &KumikoDirs) -> PluginRegistry {
-    let scan = PluginStore::new(dirs).scan();
+fn resolve(store: &PluginStore) -> PluginRegistry {
+    let scan = store.scan();
     for problem in &scan.problems {
         tracing::warn!("plugin store: {problem}");
     }
@@ -81,8 +176,14 @@ fn resolve(dirs: &KumikoDirs) -> PluginRegistry {
     registry
 }
 
-fn register_commands(registry: &PluginRegistry, commands: &CommandRegistry, host: &PluginHost) {
-    for (plugin, command) in registry.commands() {
+/// Registers the commands of `plugins`; each call starts the plugin if needed.
+fn register_commands(
+    registry: &PluginRegistry,
+    commands: &CommandRegistry,
+    host: &PluginHost,
+    plugins: &[PluginId],
+) {
+    for (plugin, command) in registry.commands().filter(|(p, _)| plugins.contains(p)) {
         let info = CommandInfo {
             id: command.id.clone(),
             title: Some(command.title.clone()),
@@ -92,7 +193,6 @@ fn register_commands(registry: &PluginRegistry, commands: &CommandRegistry, host
                 .as_deref()
                 .and_then(|w| WhenExpr::parse(w).ok()),
         };
-        // The first call starts the plugin; the host waits for its handshake.
         let (owner, command_id, host) = (plugin.clone(), command.id.clone(), host.clone());
         let handler = Arc::new(move |args: Vec<Value>| -> kumiko_commands::CommandFuture {
             let (owner, host) = (owner.clone(), host.clone());
@@ -112,26 +212,39 @@ fn register_commands(registry: &PluginRegistry, commands: &CommandRegistry, host
     }
 }
 
-/// `plugin.<id>.running` for ready plugins and `interface.<id>.available` for every interface
-/// a plugin provides or consumes.
-fn set_context_keys(registry: &PluginRegistry, commands: &CommandRegistry) {
-    let context = commands.context();
-    for entry in registry.ready() {
-        context.set(
-            format!("plugin.{}.running", entry.manifest().id()),
-            json!(false),
-        );
-    }
-    for entry in registry.entries() {
-        let manifest = entry.manifest();
-        let interfaces = manifest
-            .provides
-            .iter()
-            .map(|p| &p.interface)
-            .chain(manifest.consumes.iter().map(|c| &c.interface));
-        for interface in interfaces {
-            let available = !registry.providers(interface).is_empty();
-            context.set(format!("interface.{interface}.available"), json!(available));
+/// `interface.<id>.available` for every interface a plugin provides or consumes, with
+/// `interface.availabilityChanged` when it flips.
+fn update_interfaces(
+    old: &PluginRegistry,
+    new: &PluginRegistry,
+    commands: &CommandRegistry,
+    events: &dyn EventSink,
+) {
+    let mut interfaces: Vec<&InterfaceId> = old
+        .entries()
+        .chain(new.entries())
+        .flat_map(|entry| {
+            let manifest = entry.manifest();
+            manifest
+                .provides
+                .iter()
+                .map(|p| &p.interface)
+                .chain(manifest.consumes.iter().map(|c| &c.interface))
+        })
+        .collect();
+    interfaces.sort();
+    interfaces.dedup();
+    for interface in interfaces {
+        let before = !old.providers(interface).is_empty();
+        let available = !new.providers(interface).is_empty();
+        commands
+            .context()
+            .set(format!("interface.{interface}.available"), json!(available));
+        if before != available {
+            events.publish(Event::core(&InterfaceAvailabilityChanged {
+                interface: interface.clone(),
+                available,
+            }));
         }
     }
 }
@@ -262,5 +375,12 @@ impl HostApi for CoreHostApi {
             // Context keys the plugin set at runtime die with its process.
             context.remove_prefix(&format!("{}.", plugin.namespace()));
         }
+    }
+
+    fn preferred_provider(&self, interface: &InterfaceId) -> Option<PluginId> {
+        let key = format!("interfaces.{interface}.provider");
+        self.config
+            .get(&key, None)
+            .and_then(|value| value.as_str().and_then(|id| PluginId::new(id).ok()))
     }
 }

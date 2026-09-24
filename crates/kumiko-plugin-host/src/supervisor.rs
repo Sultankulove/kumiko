@@ -9,7 +9,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -24,12 +24,15 @@ use kumiko_protocol::methods::command::{ExecuteCommand, InvokeCommand, SetContex
 use kumiko_protocol::methods::lifecycle::{
     Exit, HostCapabilities, Initialize, InitializeParams, Initialized, Shutdown, WorkspaceInfo,
 };
+use kumiko_protocol::methods::service::{
+    ServiceCall, ServiceCallParams, ServiceInvoke, ServiceInvokeParams,
+};
 use kumiko_protocol::{ErrorCode, Request, ResponseError};
 use kumiko_service_api::{BoxFuture, Event, EventSink};
-use kumiko_types::PluginId;
+use kumiko_types::{InterfaceId, PluginId};
 
 use crate::manifest::{Manifest, PluginKind};
-use crate::registry::{PluginRegistry, protocol_version};
+use crate::registry::{PluginEntry, PluginRegistry, RegistryDiff, protocol_version};
 
 /// What the host needs from the rest of the core; implemented by `kumiko-core`.
 pub trait HostApi: Send + Sync + 'static {
@@ -48,6 +51,9 @@ pub trait HostApi: Send + Sync + 'static {
 
     /// The plugin changed state. On anything but Running its runtime registrations are gone.
     fn state_changed(&self, plugin: &Manifest, state: PluginState);
+
+    /// The user's choice among several providers (`interfaces.<id>.provider`).
+    fn preferred_provider(&self, interface: &InterfaceId) -> Option<PluginId>;
 }
 
 /// Per-plugin part of `initialize`.
@@ -117,6 +123,8 @@ struct SlotState {
     /// Incremented per start, so late notifications about an old process are ignored.
     generation: u64,
     stopping: bool,
+    /// Removed from the host (uninstalled, disabled, replaced); never starts again.
+    retired: bool,
     crashes: VecDeque<Instant>,
 }
 
@@ -128,11 +136,43 @@ struct Slot {
     lifecycle: tokio::sync::Mutex<()>,
 }
 
+impl Slot {
+    /// A slot for a ready process plugin; other plugins have no process to supervise.
+    fn for_entry(entry: &PluginEntry) -> Option<Arc<Self>> {
+        (entry.is_ready() && entry.manifest().plugin.kind == PluginKind::Process).then(|| {
+            Arc::new(Self {
+                manifest: entry.plugin.manifest.clone(),
+                dir: entry.plugin.dir.clone(),
+                state: Mutex::new(SlotState {
+                    state: PluginState::Enabled,
+                    reason: None,
+                    process: None,
+                    generation: 0,
+                    stopping: false,
+                    retired: false,
+                    crashes: VecDeque::new(),
+                }),
+                lifecycle: tokio::sync::Mutex::new(()),
+            })
+        })
+    }
+}
+
 struct Inner {
     api: Arc<dyn HostApi>,
     events: Arc<dyn EventSink>,
     config: SupervisorConfig,
-    slots: HashMap<PluginId, Arc<Slot>>,
+    registry: RwLock<Arc<PluginRegistry>>,
+    slots: RwLock<HashMap<PluginId, Arc<Slot>>>,
+}
+
+fn read<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn write<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
+    lock.write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Starts, stops and supervises the process plugins of a registry.
@@ -144,53 +184,147 @@ pub struct PluginHost {
 impl PluginHost {
     /// Takes over the ready process plugins of the registry; nothing starts yet.
     pub fn new(
-        registry: &PluginRegistry,
+        registry: Arc<PluginRegistry>,
         api: Arc<dyn HostApi>,
         events: Arc<dyn EventSink>,
         config: SupervisorConfig,
     ) -> Self {
         let slots = registry
-            .ready()
-            .filter(|entry| entry.manifest().plugin.kind == PluginKind::Process)
-            .map(|entry| {
-                let slot = Slot {
-                    manifest: entry.plugin.manifest.clone(),
-                    dir: entry.plugin.dir.clone(),
-                    state: Mutex::new(SlotState {
-                        state: PluginState::Enabled,
-                        reason: None,
-                        process: None,
-                        generation: 0,
-                        stopping: false,
-                        crashes: VecDeque::new(),
-                    }),
-                    lifecycle: tokio::sync::Mutex::new(()),
-                };
-                (entry.manifest().id().clone(), Arc::new(slot))
-            })
+            .entries()
+            .filter_map(|entry| Some((entry.manifest().id().clone(), Slot::for_entry(entry)?)))
             .collect();
         Self {
             inner: Arc::new(Inner {
                 api,
                 events,
                 config,
-                slots,
+                registry: RwLock::new(registry),
+                slots: RwLock::new(slots),
             }),
         }
     }
 
+    /// The registry the host currently works with.
+    pub fn registry(&self) -> Arc<PluginRegistry> {
+        read(&self.inner.registry).clone()
+    }
+
+    /// Switches to a new registry after plugins were installed, removed, enabled or disabled.
+    /// Plugins that are no longer ready (or changed) are stopped; new ones can start on demand.
+    pub async fn replace_registry(&self, new: Arc<PluginRegistry>) -> RegistryDiff {
+        let diff = self.registry().diff(&new);
+        for plugin in &diff.removed {
+            self.retire(plugin).await;
+        }
+        {
+            let mut slots = write(&self.inner.slots);
+            for plugin in &diff.added {
+                if let Some(slot) = new.get(plugin).and_then(Slot::for_entry) {
+                    slots.insert(plugin.clone(), slot);
+                }
+            }
+        }
+        *write(&self.inner.registry) = new;
+        diff
+    }
+
+    /// Stops the plugin for good and forgets it.
+    async fn retire(&self, plugin: &PluginId) {
+        self.stop(plugin).await;
+        let removed = write(&self.inner.slots).remove(plugin);
+        if let Some(slot) = removed {
+            let _guard = slot.lifecycle.lock().await;
+            lock(&slot.state).retired = true;
+        }
+    }
+
+    fn slot(&self, plugin: &PluginId) -> Option<Arc<Slot>> {
+        read(&self.inner.slots).get(plugin).cloned()
+    }
+
     /// Lifecycle state of a supervised plugin.
     pub fn state(&self, plugin: &PluginId) -> Option<PluginState> {
-        self.inner
-            .slots
-            .get(plugin)
-            .map(|slot| lock(&slot.state).state)
+        self.slot(plugin).map(|slot| lock(&slot.state).state)
     }
 
     /// Process id of a running plugin.
     pub fn pid(&self, plugin: &PluginId) -> Option<u32> {
-        let slot = self.inner.slots.get(plugin)?;
+        let slot = self.slot(plugin)?;
         lock(&slot.state).process.as_ref().and_then(|p| p.pid)
+    }
+
+    /// `service/call` from `caller`: routes to a ready provider of a matching version, starting
+    /// it if needed (activation `onInterface`, spec section 14).
+    pub async fn call_interface(
+        &self,
+        caller: &PluginId,
+        call: ServiceCallParams,
+    ) -> Result<Value, ResponseError> {
+        let registry = self.registry();
+        let interface = &call.interface;
+        let consumes = registry
+            .get(caller)
+            .and_then(|e| {
+                e.manifest()
+                    .consumes
+                    .iter()
+                    .find(|c| &c.interface == interface)
+            })
+            .ok_or_else(|| {
+                ResponseError::new(
+                    ErrorCode::PermissionDenied,
+                    format!("{caller} does not declare interface {interface} in [[consumes]]"),
+                )
+            })?;
+        let providers = registry.providers(interface);
+        if providers.is_empty() {
+            return Err(ResponseError::new(
+                ErrorCode::NotFound,
+                format!("no provider of interface {interface}"),
+            ));
+        }
+        let matching: Vec<&PluginId> =
+            providers
+                .iter()
+                .filter(|provider| {
+                    registry.get(provider).is_some_and(|entry| {
+                        entry.manifest().provides.iter().any(|p| {
+                            &p.interface == interface && consumes.version.matches(&p.version)
+                        })
+                    })
+                })
+                .collect();
+        let preferred = self.inner.api.preferred_provider(interface);
+        let provider = match preferred
+            .as_ref()
+            .and_then(|p| matching.iter().find(|m| **m == p))
+        {
+            Some(provider) => *provider,
+            None => {
+                let Some(first) = matching.first() else {
+                    return Err(ResponseError::new(
+                        ErrorCode::InterfaceVersionMismatch,
+                        format!("no provider of {interface} matches {}", consumes.version),
+                    ));
+                };
+                if matching.len() > 1 {
+                    tracing::warn!(%interface, provider = %first, "several providers, taking the first");
+                }
+                *first
+            }
+        };
+        let peer = self.ensure_running(provider).await?;
+        let invoke = ServiceInvokeParams {
+            interface: call.interface,
+            method: call.method,
+            params: call.params,
+            caller: caller.clone(),
+        };
+        match peer.request::<ServiceInvoke>(&invoke).await {
+            Ok(value) => Ok(value),
+            Err(RpcError::Remote(error)) => Err(error),
+            Err(error) => Err(not_running(provider, error)),
+        }
     }
 
     /// Runs a command of the plugin, starting the plugin if needed.
@@ -215,7 +349,7 @@ impl PluginHost {
 
     /// Starts the plugin unless it runs already; waits for the handshake.
     pub async fn ensure_running(&self, plugin: &PluginId) -> Result<Peer, ResponseError> {
-        let Some(slot) = self.inner.slots.get(plugin).cloned() else {
+        let Some(slot) = self.slot(plugin) else {
             return Err(not_running(plugin, "it is not an enabled process plugin"));
         };
         if let Some(peer) = self.running_peer(&slot).await {
@@ -227,6 +361,9 @@ impl PluginHost {
         }
         {
             let state = lock(&slot.state);
+            if state.retired {
+                return Err(not_running(plugin, "it was removed"));
+            }
             if state.state == PluginState::Failed {
                 let reason = state.reason.clone().unwrap_or_else(|| "failed".into());
                 return Err(not_running(plugin, reason));
@@ -237,7 +374,7 @@ impl PluginHost {
 
     /// Stops the plugin gracefully; it may be started again later.
     pub async fn stop(&self, plugin: &PluginId) {
-        let Some(slot) = self.inner.slots.get(plugin).cloned() else {
+        let Some(slot) = self.slot(plugin) else {
             return;
         };
         let _guard = slot.lifecycle.lock().await;
@@ -270,7 +407,7 @@ impl PluginHost {
     /// Stops every running plugin, e.g. when the IDE exits.
     pub async fn stop_all(&self) {
         let mut tasks = tokio::task::JoinSet::new();
-        let plugins: Vec<PluginId> = self.inner.slots.keys().cloned().collect();
+        let plugins: Vec<PluginId> = read(&self.inner.slots).keys().cloned().collect();
         for plugin in plugins {
             let host = self.clone();
             tasks.spawn(async move { host.stop(&plugin).await });
@@ -299,7 +436,11 @@ impl PluginHost {
             api_version: protocol_version().to_string(),
             plugin_id: plugin.clone(),
             host_capabilities: HostCapabilities {
-                methods: vec![ExecuteCommand::METHOD.into(), SetContext::METHOD.into()],
+                methods: vec![
+                    ExecuteCommand::METHOD.into(),
+                    SetContext::METHOD.into(),
+                    ServiceCall::METHOD.into(),
+                ],
                 experimental: None,
             },
             workspace: session.workspace,
@@ -380,6 +521,8 @@ impl PluginHost {
             plugin: plugin.clone(),
             manifest: slot.manifest.clone(),
             api: self.inner.api.clone(),
+            // Weak: the plugin's connection must not keep the host alive.
+            host: Arc::downgrade(&self.inner),
         };
         let peer = Peer::spawn(stdout, stdin, PeerConfig::default(), move |_| {
             bridge.router()
@@ -465,7 +608,9 @@ impl PluginHost {
             let _guard = slot.lifecycle.lock().await;
             let still_crashed = {
                 let state = lock(&slot.state);
-                state.generation == generation && state.state == PluginState::Crashed
+                state.generation == generation
+                    && state.state == PluginState::Crashed
+                    && !state.retired
             };
             if still_crashed && let Err(error) = host.start(&slot).await {
                 tracing::warn!(plugin = %slot.manifest.id(), "restart failed: {}", error.message);
@@ -563,6 +708,7 @@ struct Bridge {
     plugin: PluginId,
     manifest: Manifest,
     api: Arc<dyn HostApi>,
+    host: Weak<Inner>,
 }
 
 impl Bridge {
@@ -571,11 +717,26 @@ impl Bridge {
             plugin,
             manifest,
             api,
+            host,
         } = self;
         let execute_api = api.clone();
+        let (caller, execute_caller) = (plugin.clone(), plugin);
         Router::new()
             .on_request::<ExecuteCommand, _, _>(move |call| {
-                execute_api.execute_command(&plugin, call)
+                execute_api.execute_command(&execute_caller, call)
+            })
+            .on_request::<ServiceCall, _, _>(move |call| {
+                let host = host.upgrade().map(|inner| PluginHost { inner });
+                let caller = caller.clone();
+                async move {
+                    match host {
+                        Some(host) => host.call_interface(&caller, call).await,
+                        None => Err(ResponseError::new(
+                            ErrorCode::InternalError,
+                            "the host is gone",
+                        )),
+                    }
+                }
             })
             .on_request::<SetContext, _, _>(move |params| {
                 let result = if manifest.owns_key(&params.key) {

@@ -5,3 +5,4 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 mod e3_documents;
+mod e4_plugins;

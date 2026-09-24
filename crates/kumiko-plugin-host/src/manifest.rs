@@ -315,6 +315,19 @@ impl Manifest {
         &self.plugin.id
     }
 
+    /// The plugin's own prefix for commands, settings and context keys: the last segment of its
+    /// id (`java` for `kumiko.java`). Writing outside it is refused (spec, sections 11 and 22).
+    pub fn namespace(&self) -> &str {
+        let id = self.plugin.id.as_str();
+        id.rsplit_once('.').map_or(id, |(_, last)| last)
+    }
+
+    /// Whether `key` (a command id, setting or context key) lies in the plugin's namespace.
+    pub fn owns_key(&self, key: &str) -> bool {
+        key.strip_prefix(self.namespace())
+            .is_some_and(|rest| rest.starts_with('.') && rest.len() > 1)
+    }
+
     /// Whether a host speaking KPP `version` can run this plugin.
     pub fn supports_api(&self, version: &Version) -> bool {
         self.plugin.api.matches(version)
@@ -374,6 +387,20 @@ impl Manifest {
         )?;
 
         let contributes = &self.contributes;
+        if let Some(command) = contributes
+            .commands
+            .iter()
+            .find(|c| !self.owns_key(c.id.as_str()))
+        {
+            return Err(invalid(
+                "contributes.commands",
+                format!(
+                    "`{}` is outside the plugin namespace `{}.*`",
+                    command.id,
+                    self.namespace()
+                ),
+            ));
+        }
         unique(
             "contributes.commands",
             contributes.commands.iter().map(|c| c.id.as_str()),
@@ -569,6 +596,17 @@ path = "l10n/"
     }
 
     #[test]
+    fn namespace_is_the_last_id_segment() {
+        let manifest = Manifest::parse(JAVA).unwrap();
+        assert_eq!(manifest.namespace(), "java");
+        assert!(manifest.owns_key("java.home"));
+        assert!(!manifest.owns_key("java"));
+        assert!(!manifest.owns_key("java."));
+        assert!(!manifest.owns_key("javascript.home"));
+        assert!(!manifest.owns_key("git.path"));
+    }
+
+    #[test]
     fn command_activation_patterns() {
         let manifest = Manifest::parse(JAVA).unwrap();
         assert!(manifest.activates_on_command("java.selectJdk"));
@@ -675,7 +713,7 @@ path = "l10n/"
     #[test]
     fn rejects_inconsistent_sections() {
         let process = "kind = \"process\"\nentry = \"p\"";
-        let command = "[[contributes.commands]]\nid = \"test.run\"\ntitle = \"Run\"\n";
+        let command = "[[contributes.commands]]\nid = \"plugin.run\"\ntitle = \"Run\"\n";
         let provides = "[[provides]]\ninterface = \"test.api\"\nversion = \"1.0.0\"\n";
         let cases = [
             (
@@ -692,11 +730,15 @@ path = "l10n/"
             ),
             (
                 format!("{command}{command}"),
-                "`test.run` is declared twice",
+                "`plugin.run` is declared twice",
             ),
             (format!("{command}when = \"a &&\""), "contributes.commands"),
             (
-                "[[contributes.keybindings]]\nkey = \" \"\ncommand = \"test.run\"".to_owned(),
+                "[[contributes.commands]]\nid = \"other.run\"\ntitle = \"Run\"".to_owned(),
+                "outside the plugin namespace `plugin.*`",
+            ),
+            (
+                "[[contributes.keybindings]]\nkey = \" \"\ncommand = \"plugin.run\"".to_owned(),
                 "`key` must not be empty",
             ),
             (

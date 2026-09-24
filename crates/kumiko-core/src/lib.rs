@@ -16,6 +16,7 @@ pub use kumiko_config as config;
 pub use kumiko_documents as documents;
 pub use kumiko_events as events;
 pub use kumiko_fs as fs;
+pub use kumiko_plugin_host as plugin_host;
 pub use kumiko_project as project;
 pub use kumiko_protocol as protocol;
 pub use kumiko_resources as resources;
@@ -27,6 +28,7 @@ use kumiko_config::{ConfigService, KeymapSource};
 use kumiko_documents::{DocumentService, DocumentsConfig};
 use kumiko_events::{Delivery, EventBus, EventFilter};
 use kumiko_fs::{FsWatcher, LocalFileSystem, WatchError, WatcherConfig};
+use kumiko_plugin_host::PluginRegistry;
 use kumiko_project::{ProjectError, ProjectService};
 use kumiko_protocol::common::WorkspaceFolder;
 use kumiko_protocol::events::{ConfigChanged, FsChanged};
@@ -34,6 +36,8 @@ use kumiko_resources::{ResourceKind, ResourceRegistry};
 use kumiko_service_api::EventSink;
 use kumiko_types::KumikoDirs;
 use kumiko_types::paths::workspace_settings_dir;
+
+mod plugins;
 
 /// Settings the core itself reacts to.
 const WATCHER_EXCLUDE: &str = "files.watcherExclude";
@@ -82,6 +86,7 @@ struct Inner {
     documents: Arc<DocumentService>,
     project: Arc<ProjectService>,
     resources: Arc<ResourceRegistry>,
+    plugins: Arc<PluginRegistry>,
     tasks: Mutex<Vec<JoinHandle<()>>>,
 }
 
@@ -169,6 +174,7 @@ impl CoreApi {
         project.set_exclude(&string_list(config.get(FILES_EXCLUDE, None)))?;
         let commands = Arc::new(CommandRegistry::new());
         commands.context().set("workspaceFolderCount", json!(0));
+        let plugins = Arc::new(plugins::load(&options.dirs, &commands, &config));
 
         let core = Self {
             inner: Arc::new(Inner {
@@ -181,6 +187,7 @@ impl CoreApi {
                 documents,
                 project,
                 resources,
+                plugins,
                 tasks: Mutex::default(),
             }),
         };
@@ -331,6 +338,11 @@ impl CoreApi {
 
     pub fn resources(&self) -> &ResourceRegistry {
         &self.inner.resources
+    }
+
+    /// Installed plugins resolved at startup, with their status and contributions.
+    pub fn plugins(&self) -> &PluginRegistry {
+        &self.inner.plugins
     }
 }
 

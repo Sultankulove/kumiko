@@ -352,7 +352,7 @@ mod tests {
                 "[[contributes.commands]]\nid = \"echo.say\"\ntitle = \"Say\"\n[[contributes.keybindings]]\nkey = \"ctrl+e\"\ncommand = \"echo.say\"",
             ),
             plugin(
-                "test.other",
+                "test2.echo",
                 "1.0.0",
                 "[[contributes.commands]]\nid = \"echo.say\"\ntitle = \"Also say\"",
             ),

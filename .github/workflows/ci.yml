@@ -33,6 +33,11 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      # The reference WASM plugin in C (MVP criterion 16) is built with wasi-sdk.
+      - name: Install wasi-sdk
+        run: |
+          curl -sSfL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-x86_64-linux.tar.gz | tar xz -C "$RUNNER_TEMP"
+          echo "WASI_SDK_PATH=$RUNNER_TEMP/wasi-sdk-34.0-x86_64-linux" >> "$GITHUB_ENV"
       # includes tests/architecture.rs: crate graph and language-agnostic L0/L1
       - run: cargo test --workspace --locked
 

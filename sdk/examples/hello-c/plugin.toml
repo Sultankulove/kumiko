@@ -1,0 +1,18 @@
+# The reference WASM plugin not written in Rust (MVP criterion 16): C, built with wasi-sdk
+# against the WIT package in sdk/wit. Build: ./build.sh <out-dir> → <out-dir>/plugin.wasm.
+[plugin]
+id = "kumiko.hello-c"
+name = "Hello (C)"
+version = "0.1.0"
+api = "^0.1"
+kind = "wasm"
+entry = "plugin.wasm"
+activation = ["onCommand:hello-c.*"]
+
+[[contributes.commands]]
+id = "hello-c.greet"
+title = "Hello (C): greet"
+
+[[contributes.commands]]
+id = "hello-c.remember"
+title = "Hello (C): set a context key through the host"

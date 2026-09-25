@@ -1,6 +1,7 @@
 //! E5: the E4 suite for WASM plugins. `kumiko.echo-wasm` is installed at runtime, started on
 //! first use, restarted after a trap, interrupted when it loops, limited in memory and refused
-//! host methods it has no permission for; the core stays alive throughout.
+//! host methods it has no permission for; the core stays alive throughout. `kumiko.hello-c`, a
+//! plugin written in C, covers MVP criterion 16.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -201,4 +202,61 @@ async fn memory_limits_and_repeated_traps() {
     let error = run(&ide, "echo-wasm.say", vec![]).await.unwrap_err();
     assert!(error.contains("crashed 3 times"), "{error}");
     assert!(core.config().get("editor.tabSize", None).is_some());
+}
+
+/// Builds `sdk/examples/hello-c` with wasi-sdk (`WASI_SDK_PATH`, by default ~/.local/wasi-sdk).
+fn hello_c(dir: &Path) -> PathBuf {
+    let example = fixtures::workspace_root().join("sdk/examples/hello-c");
+    let out = dir.join("hello-c-build");
+    let status = std::process::Command::new("bash")
+        .arg(example.join("build.sh"))
+        .arg(&out)
+        .status()
+        .expect("bash runs");
+    assert!(
+        status.success(),
+        "building the C plugin failed; is wasi-sdk installed?"
+    );
+    let files = [("plugin.wasm", out.join("plugin.wasm"))];
+    let files: Vec<(&str, &Path)> = files.iter().map(|(n, p)| (*n, p.as_path())).collect();
+    fixtures::plugin_source(
+        dir,
+        "hello-c-src",
+        &example.join("plugin.toml"),
+        |m| m,
+        &files,
+    )
+}
+
+/// MVP criterion 16: install a WASM plugin written in C and call its commands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn criterion_16_plugin_written_in_c() {
+    let ide = start(3).await;
+    let core = &ide.core;
+    let installed = core.install_plugin(&hello_c(ide.home())).await.unwrap();
+    assert_eq!(installed.as_str(), "kumiko.hello-c");
+
+    for count in 1..=2 {
+        assert_eq!(
+            run(&ide, "hello-c.greet", vec![]).await.unwrap(),
+            json!({ "greeting": "Hello from C", "count": count })
+        );
+    }
+    // The C plugin calls back into the host.
+    assert_eq!(
+        run(&ide, "hello-c.remember", vec![]).await.unwrap(),
+        json!(true)
+    );
+    assert_eq!(
+        core.commands().context().get("hello-c.greeted"),
+        Some(json!(true))
+    );
+    assert_eq!(
+        core.plugin_host().state(&installed),
+        Some(PluginState::Running)
+    );
+
+    core.uninstall_plugin(&installed).await.unwrap();
+    assert!(run(&ide, "hello-c.greet", vec![]).await.is_err());
+    assert_eq!(core.commands().context().get("hello-c.greeted"), None);
 }

@@ -1,0 +1,19 @@
+[package]
+name = "kumiko-echo-wasm"
+description = "kumiko.echo-wasm: test fixture and example of a WASM plugin in Rust."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+kumiko-plugin-sdk = { workspace = true, features = ["wasm"] }
+serde_json.workspace = true

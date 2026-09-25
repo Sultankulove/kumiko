@@ -69,7 +69,13 @@ pub struct PluginSection {
     pub permissions: BTreeSet<Permission>,
     #[serde(default)]
     pub activation: Vec<ActivationEvent>,
+    /// Linear memory a WASM plugin needs, in MiB (default 64, at most 256).
+    #[serde(default)]
+    pub memory: Option<u32>,
 }
+
+/// The most memory a WASM plugin may ask for, in MiB.
+pub const MAX_WASM_MEMORY_MIB: u32 = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -94,6 +100,18 @@ pub enum Permission {
     Network,
     #[serde(rename = "ui")]
     Ui,
+}
+
+impl std::fmt::Display for Permission {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::FsWorkspace => "fs.workspace",
+            Self::FsHome => "fs.home",
+            Self::ProcessSpawn => "process.spawn",
+            Self::Network => "network",
+            Self::Ui => "ui",
+        })
+    }
 }
 
 /// When the host starts the plugin's code.
@@ -370,6 +388,21 @@ impl Manifest {
                 return Err(invalid(
                     "plugin.entry",
                     "a wasm plugin's entry is a .wasm component",
+                ));
+            }
+            _ => {}
+        }
+        match (plugin.kind, plugin.memory) {
+            (PluginKind::Wasm, Some(mib)) if mib == 0 || mib > MAX_WASM_MEMORY_MIB => {
+                return Err(invalid(
+                    "plugin.memory",
+                    format!("must be 1..={MAX_WASM_MEMORY_MIB} MiB"),
+                ));
+            }
+            (PluginKind::Process | PluginKind::Data, Some(_)) => {
+                return Err(invalid(
+                    "plugin.memory",
+                    "only wasm plugins have a memory limit",
                 ));
             }
             _ => {}
@@ -665,6 +698,14 @@ path = "l10n/"
             (
                 with_plugin("kind = \"wasm\"\nentry = \"plugin.so\"", ""),
                 ".wasm component",
+            ),
+            (
+                with_plugin("kind = \"wasm\"\nentry = \"p.wasm\"\nmemory = 512", ""),
+                "must be 1..=256 MiB",
+            ),
+            (
+                with_plugin("kind = \"process\"\nentry = \"p\"\nmemory = 32", ""),
+                "only wasm plugins have a memory limit",
             ),
             (
                 with_plugin("kind = \"process\"\nentry = \"../evil\"", ""),

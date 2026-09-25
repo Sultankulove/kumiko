@@ -14,32 +14,12 @@ use kumiko_headless::kumiko_core::service_api::Event;
 use kumiko_headless::{Headless, eventually, wait_for};
 use kumiko_types::{CommandId, PluginId};
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
-}
+use crate::fixtures;
 
 /// Builds the fixture once per test run and returns the path of its binary.
 fn echo_binary() -> &'static Path {
     static BINARY: OnceLock<PathBuf> = OnceLock::new();
-    BINARY.get_or_init(|| {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let output = Command::new(cargo)
-            .args(["build", "-q", "-p", "kumiko-echo", "--message-format=json"])
-            .current_dir(workspace_root())
-            .output()
-            .expect("cargo runs");
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-            .find(|m| m["reason"] == "compiler-artifact" && m["target"]["name"] == "kumiko-echo")
-            .and_then(|m| m["executable"].as_str().map(PathBuf::from))
-            .expect("cargo reports the kumiko-echo executable")
-    })
+    BINARY.get_or_init(|| fixtures::build("kumiko-echo", &[], "kumiko-echo", ""))
 }
 
 /// An installable copy of `sdk/examples/echo`: its manifest and the built binary.
@@ -49,13 +29,9 @@ fn echo_source(dir: &Path) -> PathBuf {
 
 /// Like [`echo_source`], with an edited manifest.
 fn echo_source_with(dir: &Path, edit: impl FnOnce(String) -> String) -> PathBuf {
-    let source = dir.join("echo-src");
-    std::fs::create_dir_all(source.join("bin")).unwrap();
-    let manifest =
-        std::fs::read_to_string(workspace_root().join("sdk/examples/echo/plugin.toml")).unwrap();
-    std::fs::write(source.join("plugin.toml"), edit(manifest)).unwrap();
-    std::fs::copy(echo_binary(), source.join("bin/kumiko-echo")).unwrap();
-    source
+    let manifest = fixtures::workspace_root().join("sdk/examples/echo/plugin.toml");
+    let files = [("bin/kumiko-echo", echo_binary())];
+    fixtures::plugin_source(dir, "echo-src", &manifest, edit, &files)
 }
 
 async fn start(max_crashes: usize) -> Headless {

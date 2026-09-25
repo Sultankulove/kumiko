@@ -21,6 +21,7 @@ pub use kumiko_project as project;
 pub use kumiko_protocol as protocol;
 pub use kumiko_resources as resources;
 pub use kumiko_service_api as service_api;
+pub use kumiko_wasm_host as wasm_host;
 
 use kumiko_commands::CommandRegistry;
 use kumiko_config::keymap::{Keybinding, parse_keymap};
@@ -34,8 +35,10 @@ use kumiko_protocol::common::WorkspaceFolder;
 use kumiko_protocol::events::{ConfigChanged, FsChanged};
 use kumiko_resources::{ResourceKind, ResourceRegistry};
 use kumiko_service_api::EventSink;
+use kumiko_service_api::wasm::WasmRuntime;
 use kumiko_types::paths::workspace_settings_dir;
 use kumiko_types::{KumikoDirs, PluginId};
+use kumiko_wasm_host::{WasmConfig, WasmEngine};
 
 mod plugins;
 
@@ -66,10 +69,16 @@ pub struct CoreOptions {
     pub watcher: WatcherConfig,
     /// Timeouts and restart policy of process plugins.
     pub plugins: SupervisorConfig,
+    /// WASM runtime limits; the compilation cache defaults to `dirs.wasm_cache_dir()`.
+    pub wasm: WasmConfig,
 }
 
 impl CoreOptions {
     pub fn new(dirs: KumikoDirs) -> Self {
+        let wasm = WasmConfig {
+            cache_dir: Some(dirs.wasm_cache_dir()),
+            ..WasmConfig::default()
+        };
         Self {
             dirs,
             builtin_resources: None,
@@ -77,6 +86,7 @@ impl CoreOptions {
             documents: DocumentsConfig::default(),
             watcher: WatcherConfig::default(),
             plugins: SupervisorConfig::default(),
+            wasm,
         }
     }
 }
@@ -179,6 +189,14 @@ impl CoreApi {
         project.set_exclude(&string_list(config.get(FILES_EXCLUDE, None)))?;
         let commands = Arc::new(CommandRegistry::new());
         commands.context().set("workspaceFolderCount", json!(0));
+        // Without an engine the IDE still works; WASM plugins then fail to start with a reason.
+        let wasm: Option<Arc<dyn WasmRuntime>> = match WasmEngine::new(options.wasm.clone()) {
+            Ok(engine) => Some(Arc::new(engine)),
+            Err(error) => {
+                tracing::error!("{error}");
+                None
+            }
+        };
         let services = plugins::Services {
             commands: commands.clone(),
             config: config.clone(),
@@ -187,7 +205,7 @@ impl CoreApi {
             locale: options.locale.clone(),
         };
         let plugins =
-            plugins::PluginManager::start(&options.dirs, services, options.plugins.clone());
+            plugins::PluginManager::start(&options.dirs, services, options.plugins.clone(), wasm);
 
         let core = Self {
             inner: Arc::new(Inner {

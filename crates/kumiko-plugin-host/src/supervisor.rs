@@ -1,10 +1,15 @@
-//! Running process plugins: activation, the KPP bridge and supervision (spec, section 13).
+//! Running plugins: activation, the KPP bridge and supervision (spec, section 13).
 //!
-//! A plugin process is started on first use and initialized with a timeout. Its exit without a
-//! stop request is a crash: the host releases what the plugin registered at runtime and restarts
-//! it with backoff; after too many crashes in a window the plugin is Failed until the IDE
-//! restarts. Stopping goes `shutdown` → `exit` → SIGTERM → SIGKILL, and each plugin runs in its
-//! own process group so its children go down with it.
+//! A plugin with code (a process or a WASM component) starts on first use and is initialized
+//! with a timeout. A process exit or a WASM trap without a stop request is a crash: the host
+//! releases what the plugin registered at runtime and restarts it with backoff; after too many
+//! crashes in a window the plugin is Failed until the IDE restarts. Stopping goes `shutdown` →
+//! `exit`, then for processes SIGTERM → SIGKILL; each process plugin runs in its own process
+//! group so its children go down with it.
+//!
+//! Plugin-to-host requests of both kinds go through one bridge. For WASM plugins the
+//! permissions of the manifest are enforced there; for process plugins they are declarative
+//! (spec, section 13, permissions table).
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -12,12 +17,14 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
 use std::time::{Duration, Instant};
 
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, watch};
 
-use kumiko_ipc::{Peer, PeerConfig, Router, RpcError};
+use kumiko_ipc::{Handler, HandlerFuture, Peer, PeerConfig, RpcError};
 use kumiko_protocol::common::CommandCall;
 use kumiko_protocol::events::{PluginState, PluginStateChanged};
 use kumiko_protocol::methods::command::{ExecuteCommand, InvokeCommand, SetContext};
@@ -27,11 +34,14 @@ use kumiko_protocol::methods::lifecycle::{
 use kumiko_protocol::methods::service::{
     ServiceCall, ServiceCallParams, ServiceInvoke, ServiceInvokeParams,
 };
-use kumiko_protocol::{ErrorCode, Request, ResponseError};
+use kumiko_protocol::{ErrorCode, Notification, Request, ResponseError};
+use kumiko_service_api::wasm::{
+    WasmCallError, WasmHost, WasmInstance, WasmInstanceSpec, WasmRuntime,
+};
 use kumiko_service_api::{BoxFuture, Event, EventSink};
 use kumiko_types::{InterfaceId, PluginId};
 
-use crate::manifest::{Manifest, PluginKind};
+use crate::manifest::{Manifest, Permission, PluginKind};
 use crate::registry::{PluginEntry, PluginRegistry, RegistryDiff, protocol_version};
 
 /// What the host needs from the rest of the core; implemented by `kumiko-core`.
@@ -67,8 +77,10 @@ pub struct Session {
 
 #[derive(Debug, Clone)]
 pub struct SupervisorConfig {
-    /// From spawn to the `initialize` result.
+    /// From spawn to the `initialize` result of a process plugin.
     pub start_timeout: Duration,
+    /// Answer to `initialize` of an instantiated WASM plugin.
+    pub wasm_start_timeout: Duration,
     /// Answer to `shutdown`.
     pub shutdown_timeout: Duration,
     /// Grace after `exit` and after SIGTERM before the next step.
@@ -84,6 +96,7 @@ impl Default for SupervisorConfig {
     fn default() -> Self {
         Self {
             start_timeout: Duration::from_secs(10),
+            wasm_start_timeout: Duration::from_secs(2),
             shutdown_timeout: Duration::from_secs(3),
             terminate_timeout: Duration::from_secs(2),
             backoff: [1, 4, 16].map(Duration::from_secs).to_vec(),
@@ -99,11 +112,24 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+fn read<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn write<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
+    lock.write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn not_running(plugin: &PluginId, why: impl std::fmt::Display) -> ResponseError {
     ResponseError::new(
         ErrorCode::PluginNotRunning,
         format!("plugin {plugin} is not running: {why}"),
     )
+}
+
+fn internal(error: impl std::fmt::Display) -> ResponseError {
+    ResponseError::new(ErrorCode::InternalError, error.to_string())
 }
 
 /// A started process.
@@ -116,11 +142,133 @@ struct Process {
     exited: watch::Receiver<bool>,
 }
 
+/// A started plugin of either kind.
+#[derive(Clone)]
+enum Conn {
+    Process(Process),
+    Wasm(Arc<dyn WasmInstance>),
+}
+
+/// Why a call into a plugin failed.
+enum CallError {
+    /// The plugin answered with an error.
+    Remote(ResponseError),
+    /// The process exited or the instance trapped during the call.
+    Gone(String),
+    Timeout,
+}
+
+impl Conn {
+    async fn request_raw(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Option<Duration>,
+    ) -> Result<Value, CallError> {
+        match self {
+            Conn::Process(process) => {
+                match process.peer.request_raw(method, params, timeout).await {
+                    Ok(value) => Ok(value),
+                    Err(RpcError::Remote(error)) => Err(CallError::Remote(error)),
+                    Err(RpcError::Timeout) => Err(CallError::Timeout),
+                    Err(RpcError::ConnectionClosed) => {
+                        Err(CallError::Gone("it exited during the call".into()))
+                    }
+                    Err(error) => Err(CallError::Remote(internal(error))),
+                }
+            }
+            Conn::Wasm(instance) => {
+                let call = instance.handle(method.to_owned(), params);
+                let result = match timeout {
+                    Some(timeout) => tokio::time::timeout(timeout, call)
+                        .await
+                        .map_err(|_| CallError::Timeout)?,
+                    None => call.await,
+                };
+                match result {
+                    Ok(value) => Ok(value),
+                    Err(WasmCallError::Rpc(error)) => Err(CallError::Remote(error)),
+                    Err(WasmCallError::Trap(trap)) => Err(CallError::Gone(format!("trap: {trap}"))),
+                    Err(error @ WasmCallError::Reentrant(_)) => Err(CallError::Remote(
+                        ResponseError::new(ErrorCode::InvalidRequest, error.to_string()),
+                    )),
+                }
+            }
+        }
+    }
+
+    async fn request<R: Request>(
+        &self,
+        params: &R::Params,
+        timeout: Option<Duration>,
+    ) -> Result<R::Result, CallError> {
+        let params = serde_json::to_value(params).map_err(|e| CallError::Remote(internal(e)))?;
+        let result = self.request_raw(R::METHOD, params, timeout).await?;
+        serde_json::from_value(result).map_err(|e| CallError::Remote(internal(e)))
+    }
+
+    async fn notify<N: Notification>(&self, params: &N::Params) {
+        let Ok(params) = serde_json::to_value(params) else {
+            return;
+        };
+        match self {
+            Conn::Process(process) => {
+                let _ = process.peer.notify_raw(N::METHOD, params).await;
+            }
+            Conn::Wasm(instance) => {
+                let _ = instance.notify(N::METHOD.to_owned(), params).await;
+            }
+        }
+    }
+
+    /// Whether calls can still reach the plugin.
+    fn is_alive(&self) -> bool {
+        match self {
+            Conn::Process(process) => !process.peer.is_closed(),
+            Conn::Wasm(instance) => !instance.is_dead(),
+        }
+    }
+}
+
+/// The running plugin and the start it belongs to.
+#[derive(Clone)]
+struct Running {
+    generation: u64,
+    conn: Conn,
+}
+
+/// A handle for calling a running plugin.
+#[derive(Clone)]
+pub struct PluginConnection {
+    host: PluginHost,
+    slot: Arc<Slot>,
+    running: Running,
+}
+
+impl PluginConnection {
+    /// A host-to-plugin request; a crash during the call is recorded right away.
+    async fn request<R: Request>(&self, params: &R::Params) -> Result<R::Result, ResponseError> {
+        let plugin = self.slot.manifest.id();
+        match self.running.conn.request::<R>(params, None).await {
+            Ok(result) => Ok(result),
+            Err(CallError::Remote(error)) => Err(error),
+            Err(CallError::Timeout) => Err(not_running(plugin, "the call timed out")),
+            Err(CallError::Gone(why)) => {
+                if matches!(self.running.conn, Conn::Wasm(_)) {
+                    self.host
+                        .exited(&self.slot, self.running.generation, why.clone());
+                }
+                Err(not_running(plugin, why))
+            }
+        }
+    }
+}
+
 struct SlotState {
     state: PluginState,
     reason: Option<String>,
-    process: Option<Process>,
-    /// Incremented per start, so late notifications about an old process are ignored.
+    running: Option<Running>,
+    /// Incremented per start, so late notifications about an old start are ignored.
     generation: u64,
     stopping: bool,
     /// Removed from the host (uninstalled, disabled, replaced); never starts again.
@@ -137,16 +285,16 @@ struct Slot {
 }
 
 impl Slot {
-    /// A slot for a ready process plugin; other plugins have no process to supervise.
+    /// A slot for a ready plugin with code; data plugins have nothing to run.
     fn for_entry(entry: &PluginEntry) -> Option<Arc<Self>> {
-        (entry.is_ready() && entry.manifest().plugin.kind == PluginKind::Process).then(|| {
+        (entry.is_ready() && entry.manifest().plugin.kind != PluginKind::Data).then(|| {
             Arc::new(Self {
                 manifest: entry.plugin.manifest.clone(),
                 dir: entry.plugin.dir.clone(),
                 state: Mutex::new(SlotState {
                     state: PluginState::Enabled,
                     reason: None,
-                    process: None,
+                    running: None,
                     generation: 0,
                     stopping: false,
                     retired: false,
@@ -161,32 +309,26 @@ impl Slot {
 struct Inner {
     api: Arc<dyn HostApi>,
     events: Arc<dyn EventSink>,
+    wasm: Option<Arc<dyn WasmRuntime>>,
     config: SupervisorConfig,
     registry: RwLock<Arc<PluginRegistry>>,
     slots: RwLock<HashMap<PluginId, Arc<Slot>>>,
 }
 
-fn read<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
-    lock.read().unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-fn write<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
-    lock.write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-/// Starts, stops and supervises the process plugins of a registry.
+/// Starts, stops and supervises the plugins of a registry.
 #[derive(Clone)]
 pub struct PluginHost {
     inner: Arc<Inner>,
 }
 
 impl PluginHost {
-    /// Takes over the ready process plugins of the registry; nothing starts yet.
+    /// Takes over the ready plugins of the registry; nothing starts yet. Without a WASM
+    /// runtime, WASM plugins fail to start with a reason.
     pub fn new(
         registry: Arc<PluginRegistry>,
         api: Arc<dyn HostApi>,
         events: Arc<dyn EventSink>,
+        wasm: Option<Arc<dyn WasmRuntime>>,
         config: SupervisorConfig,
     ) -> Self {
         let slots = registry
@@ -197,6 +339,7 @@ impl PluginHost {
             inner: Arc::new(Inner {
                 api,
                 events,
+                wasm,
                 config,
                 registry: RwLock::new(registry),
                 slots: RwLock::new(slots),
@@ -247,10 +390,14 @@ impl PluginHost {
         self.slot(plugin).map(|slot| lock(&slot.state).state)
     }
 
-    /// Process id of a running plugin.
+    /// Process id of a running process plugin.
     pub fn pid(&self, plugin: &PluginId) -> Option<u32> {
         let slot = self.slot(plugin)?;
-        lock(&slot.state).process.as_ref().and_then(|p| p.pid)
+        let state = lock(&slot.state);
+        match &state.running.as_ref()?.conn {
+            Conn::Process(process) => process.pid,
+            Conn::Wasm(_) => None,
+        }
     }
 
     /// `service/call` from `caller`: routes to a ready provider of a matching version, starting
@@ -313,18 +460,14 @@ impl PluginHost {
                 *first
             }
         };
-        let peer = self.ensure_running(provider).await?;
+        let connection = self.ensure_running(provider).await?;
         let invoke = ServiceInvokeParams {
             interface: call.interface,
             method: call.method,
             params: call.params,
             caller: caller.clone(),
         };
-        match peer.request::<ServiceInvoke>(&invoke).await {
-            Ok(value) => Ok(value),
-            Err(RpcError::Remote(error)) => Err(error),
-            Err(error) => Err(not_running(provider, error)),
-        }
+        connection.request::<ServiceInvoke>(&invoke).await
     }
 
     /// Runs a command of the plugin, starting the plugin if needed.
@@ -333,31 +476,24 @@ impl PluginHost {
         plugin: &PluginId,
         call: CommandCall,
     ) -> Result<Value, ResponseError> {
-        let peer = self.ensure_running(plugin).await?;
-        match peer.request::<InvokeCommand>(&call).await {
-            Ok(value) => Ok(value),
-            Err(RpcError::Remote(error)) => Err(error),
-            Err(RpcError::ConnectionClosed) => {
-                Err(not_running(plugin, "it exited during the call"))
-            }
-            Err(error) => Err(ResponseError::new(
-                ErrorCode::InternalError,
-                error.to_string(),
-            )),
-        }
+        let connection = self.ensure_running(plugin).await?;
+        connection.request::<InvokeCommand>(&call).await
     }
 
     /// Starts the plugin unless it runs already; waits for the handshake.
-    pub async fn ensure_running(&self, plugin: &PluginId) -> Result<Peer, ResponseError> {
+    pub async fn ensure_running(
+        &self,
+        plugin: &PluginId,
+    ) -> Result<PluginConnection, ResponseError> {
         let Some(slot) = self.slot(plugin) else {
-            return Err(not_running(plugin, "it is not an enabled process plugin"));
+            return Err(not_running(plugin, "it is not an enabled plugin with code"));
         };
-        if let Some(peer) = self.running_peer(&slot).await {
-            return Ok(peer);
+        if let Some(running) = self.running(&slot).await {
+            return Ok(self.connection(&slot, running));
         }
         let _guard = slot.lifecycle.lock().await;
-        if let Some(peer) = self.running_peer(&slot).await {
-            return Ok(peer);
+        if let Some(running) = self.running(&slot).await {
+            return Ok(self.connection(&slot, running));
         }
         {
             let state = lock(&slot.state);
@@ -369,7 +505,16 @@ impl PluginHost {
                 return Err(not_running(plugin, reason));
             }
         }
-        self.start(&slot).await
+        let running = self.start(&slot).await?;
+        Ok(self.connection(&slot, running))
+    }
+
+    fn connection(&self, slot: &Arc<Slot>, running: Running) -> PluginConnection {
+        PluginConnection {
+            host: self.clone(),
+            slot: slot.clone(),
+            running,
+        }
     }
 
     /// Stops the plugin gracefully; it may be started again later.
@@ -378,29 +523,35 @@ impl PluginHost {
             return;
         };
         let _guard = slot.lifecycle.lock().await;
-        let process = {
+        let running = {
             let mut state = lock(&slot.state);
-            let Some(process) = state.process.clone() else {
+            let Some(running) = state.running.clone() else {
                 return;
             };
             state.stopping = true;
-            process
+            running
         };
         self.transition(&slot, PluginState::Stopping, None);
         let config = &self.inner.config;
-        let _ = process
-            .peer
-            .request_timeout::<Shutdown>(&(), Some(config.shutdown_timeout))
+        let conn = &running.conn;
+        let _ = conn
+            .request::<Shutdown>(&(), Some(config.shutdown_timeout))
             .await;
-        let _ = process.peer.notify::<Exit>(&()).await;
-        let mut exited = process.exited.clone();
-        for force in [None, Some(false), Some(true)] {
-            if let Some(force) = force {
-                let _ = process.signal.send(force);
+        conn.notify::<Exit>(&()).await;
+        match conn {
+            Conn::Process(process) => {
+                let mut exited = process.exited.clone();
+                for force in [None, Some(false), Some(true)] {
+                    if let Some(force) = force {
+                        let _ = process.signal.send(force);
+                    }
+                    if wait_exit(&mut exited, config.terminate_timeout).await {
+                        break;
+                    }
+                }
             }
-            if wait_exit(&mut exited, config.terminate_timeout).await {
-                break;
-            }
+            // Dropping the instance is all there is to stopping a component.
+            Conn::Wasm(_) => self.exited(&slot, running.generation, "stopped".into()),
         }
     }
 
@@ -415,8 +566,8 @@ impl PluginHost {
         while tasks.join_next().await.is_some() {}
     }
 
-    /// Spawns and initializes the process. Called with the lifecycle lock held.
-    async fn start(&self, slot: &Arc<Slot>) -> Result<Peer, ResponseError> {
+    /// Starts and initializes the plugin. Called with the lifecycle lock held.
+    async fn start(&self, slot: &Arc<Slot>) -> Result<Running, ResponseError> {
         let plugin = slot.manifest.id().clone();
         self.transition(slot, PluginState::Starting, None);
         let generation = {
@@ -425,11 +576,22 @@ impl PluginHost {
             state.stopping = false;
             state.generation
         };
-        let process = match self.spawn(slot, generation) {
-            Ok(process) => process,
+        let (conn, timeout) = match slot.manifest.plugin.kind {
+            PluginKind::Wasm => (
+                self.instantiate(slot).await,
+                self.inner.config.wasm_start_timeout,
+            ),
+            PluginKind::Process | PluginKind::Data => (
+                self.spawn(slot, generation).await,
+                self.inner.config.start_timeout,
+            ),
+        };
+        let conn = match conn {
+            Ok(conn) => conn,
             Err(error) => return Err(self.fail_start(slot, error)),
         };
-        lock(&slot.state).process = Some(process.clone());
+        let running = Running { generation, conn };
+        lock(&slot.state).running = Some(running.clone());
 
         let session = self.inner.api.session(&slot.manifest);
         let params = InitializeParams {
@@ -447,40 +609,70 @@ impl PluginHost {
             config: session.config,
             locale: session.locale,
         };
-        let timeout = Some(self.inner.config.start_timeout);
-        let handshake = match process
-            .peer
-            .request_timeout::<Initialize>(&params, timeout)
-            .await
-        {
-            Ok(_) => process
-                .peer
-                .notify::<Initialized>(&())
-                .await
-                .map_err(|e| e.to_string()),
-            Err(RpcError::Timeout) => Err("no answer to initialize in time".to_owned()),
-            Err(error) => Err(format!("initialize failed: {error}")),
+        let conn = &running.conn;
+        let handshake = match conn.request::<Initialize>(&params, Some(timeout)).await {
+            Ok(_) => {
+                conn.notify::<Initialized>(&()).await;
+                Ok(())
+            }
+            Err(CallError::Timeout) => Err("no answer to initialize in time".to_owned()),
+            Err(CallError::Remote(error)) => Err(format!("initialize failed: {}", error.message)),
+            Err(CallError::Gone(why)) => Err(format!("initialize failed: {why}")),
         };
         if let Err(reason) = handshake {
-            {
-                let mut state = lock(&slot.state);
-                state.stopping = true;
+            lock(&slot.state).stopping = true;
+            if let Conn::Process(process) = conn {
+                let _ = process.signal.send(true);
             }
-            let _ = process.signal.send(true);
             return Err(self.fail_start(slot, reason));
         }
         self.transition(slot, PluginState::Running, None);
-        Ok(process.peer)
+        Ok(running)
     }
 
     fn fail_start(&self, slot: &Slot, reason: String) -> ResponseError {
         tracing::warn!(plugin = %slot.manifest.id(), "start failed: {reason}");
-        lock(&slot.state).process = None;
+        lock(&slot.state).running = None;
         self.transition(slot, PluginState::Failed, Some(reason.clone()));
         not_running(slot.manifest.id(), reason)
     }
 
-    fn spawn(&self, slot: &Arc<Slot>, generation: u64) -> Result<Process, String> {
+    fn bridge(&self, slot: &Slot) -> Bridge {
+        Bridge {
+            manifest: slot.manifest.clone(),
+            api: self.inner.api.clone(),
+            // Weak: the plugin's connection must not keep the host alive.
+            host: Arc::downgrade(&self.inner),
+        }
+    }
+
+    async fn instantiate(&self, slot: &Arc<Slot>) -> Result<Conn, String> {
+        let runtime = self
+            .inner
+            .wasm
+            .clone()
+            .ok_or_else(|| "no WASM runtime is available".to_owned())?;
+        let manifest = &slot.manifest;
+        let entry = manifest
+            .plugin
+            .entry
+            .as_ref()
+            .ok_or_else(|| "the manifest has no entry".to_owned())?;
+        let spec = WasmInstanceSpec {
+            plugin: manifest.id().clone(),
+            component: entry.resolve(&slot.dir),
+            memory_limit: manifest.plugin.memory.map(|mib| {
+                usize::try_from(mib)
+                    .unwrap_or(usize::MAX)
+                    .saturating_mul(1 << 20)
+            }),
+        };
+        let bridge: Arc<dyn WasmHost> = Arc::new(self.bridge(slot));
+        let instance = runtime.instantiate(spec, bridge).await?;
+        Ok(Conn::Wasm(instance))
+    }
+
+    async fn spawn(&self, slot: &Arc<Slot>, generation: u64) -> Result<Conn, String> {
         let plugin = slot.manifest.id().clone();
         let entry = slot
             .manifest
@@ -499,9 +691,21 @@ impl PluginHost {
             .kill_on_drop(true);
         #[cfg(unix)]
         command.process_group(0);
-        let mut child = command
-            .spawn()
-            .map_err(|error| format!("cannot start {}: {error}", entry.display()))?;
+        let mut attempt = 0;
+        let mut child = loop {
+            match command.spawn() {
+                Ok(child) => break child,
+                // A freshly installed executable can be briefly "busy": a child forked by another
+                // thread while the file was being written holds the write handle until its exec.
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::ExecutableFileBusy && attempt < 10 =>
+                {
+                    attempt += 1;
+                    tokio::time::sleep(Duration::from_millis(10 * attempt)).await;
+                }
+                Err(error) => return Err(format!("cannot start {}: {error}", entry.display())),
+            }
+        };
         let (Some(stdin), Some(stdout), Some(stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {
@@ -517,16 +721,8 @@ impl PluginHost {
             }
         });
 
-        let bridge = Bridge {
-            plugin: plugin.clone(),
-            manifest: slot.manifest.clone(),
-            api: self.inner.api.clone(),
-            // Weak: the plugin's connection must not keep the host alive.
-            host: Arc::downgrade(&self.inner),
-        };
-        let peer = Peer::spawn(stdout, stdin, PeerConfig::default(), move |_| {
-            bridge.router()
-        });
+        let bridge = self.bridge(slot);
+        let peer = Peer::spawn(stdout, stdin, PeerConfig::default(), move |_| bridge);
         let (signal, signals) = mpsc::unbounded_channel();
         let (exited_tx, exited) = watch::channel(false);
         let host = self.clone();
@@ -539,22 +735,27 @@ impl PluginHost {
             // After the state change, so a stop() that waits for this sees the final state.
             exited_tx.send_replace(true);
         });
-        Ok(Process {
+        Ok(Conn::Process(Process {
             peer,
             pid,
             signal,
             exited,
-        })
+        }))
     }
 
-    /// The process of `generation` is gone: a stop, or a crash to recover from.
+    /// The start `generation` is gone (process exit, trap, stop): a stop, or a crash to
+    /// recover from. Only the first report of a start counts.
     fn exited(&self, slot: &Arc<Slot>, generation: u64, status: String) {
         let (crashed, restart) = {
             let mut state = lock(&slot.state);
-            if state.generation != generation {
+            let current = state
+                .running
+                .as_ref()
+                .is_some_and(|r| r.generation == generation);
+            if state.generation != generation || !current {
                 return;
             }
-            state.process = None;
+            state.running = None;
             if state.stopping || state.state == PluginState::Failed {
                 (false, None)
             } else {
@@ -632,25 +833,29 @@ impl PluginHost {
             reason,
         }));
     }
-}
 
-impl PluginHost {
-    /// The connection of a running plugin. A lost connection means a dying process: it is
-    /// killed and its exit recorded (as a crash) before the caller decides to start it again.
-    async fn running_peer(&self, slot: &Slot) -> Option<Peer> {
-        let process = {
+    /// The running plugin, if calls can reach it. A lost connection or a trapped instance
+    /// means the plugin is gone: a dying process is killed, and the exit is recorded (as a
+    /// crash) before the caller decides to start it again.
+    async fn running(&self, slot: &Arc<Slot>) -> Option<Running> {
+        let running = {
             let state = lock(&slot.state);
-            match (&state.state, &state.process) {
-                (PluginState::Running, Some(process)) => process.clone(),
+            match (&state.state, &state.running) {
+                (PluginState::Running, Some(running)) => running.clone(),
                 _ => return None,
             }
         };
-        if !process.peer.is_closed() {
-            return Some(process.peer);
+        if running.conn.is_alive() {
+            return Some(running);
         }
-        let _ = process.signal.send(true);
-        let mut exited = process.exited.clone();
-        wait_exit(&mut exited, self.inner.config.terminate_timeout).await;
+        match &running.conn {
+            Conn::Process(process) => {
+                let _ = process.signal.send(true);
+                let mut exited = process.exited.clone();
+                wait_exit(&mut exited, self.inner.config.terminate_timeout).await;
+            }
+            Conn::Wasm(_) => self.exited(slot, running.generation, "trapped".into()),
+        }
         None
     }
 }
@@ -703,56 +908,150 @@ fn signal_group(pid: Option<u32>, force: bool) {
 #[cfg(not(unix))]
 fn signal_group(_pid: Option<u32>, _force: bool) {}
 
-/// Plugin-to-host methods of one plugin.
+/// The permission a plugin-to-host method needs (spec, section 13).
+fn required_permission(method: &str) -> Option<Permission> {
+    if method == "task/run" {
+        return Some(Permission::ProcessSpawn);
+    }
+    match method.split('/').next() {
+        Some("fs" | "document") => Some(Permission::FsWorkspace),
+        Some("process") => Some(Permission::ProcessSpawn),
+        Some("ui") => Some(Permission::Ui),
+        _ => None,
+    }
+}
+
+/// Plugin-to-host requests of one plugin, for both kinds.
 struct Bridge {
-    plugin: PluginId,
     manifest: Manifest,
     api: Arc<dyn HostApi>,
     host: Weak<Inner>,
 }
 
+fn params<T: DeserializeOwned>(method: &str, params: Value) -> Result<T, ResponseError> {
+    serde_json::from_value(params).map_err(|error| {
+        ResponseError::new(
+            ErrorCode::InvalidParams,
+            format!("invalid params for `{method}`: {error}"),
+        )
+    })
+}
+
+fn result(value: impl Serialize) -> Result<Value, ResponseError> {
+    serde_json::to_value(value).map_err(internal)
+}
+
 impl Bridge {
-    fn router(self) -> Router {
-        let Bridge {
-            plugin,
-            manifest,
-            api,
-            host,
-        } = self;
-        let execute_api = api.clone();
-        let (caller, execute_caller) = (plugin.clone(), plugin);
-        Router::new()
-            .on_request::<ExecuteCommand, _, _>(move |call| {
-                execute_api.execute_command(&execute_caller, call)
-            })
-            .on_request::<ServiceCall, _, _>(move |call| {
-                let host = host.upgrade().map(|inner| PluginHost { inner });
-                let caller = caller.clone();
-                async move {
-                    match host {
-                        Some(host) => host.call_interface(&caller, call).await,
-                        None => Err(ResponseError::new(
-                            ErrorCode::InternalError,
-                            "the host is gone",
-                        )),
-                    }
-                }
-            })
-            .on_request::<SetContext, _, _>(move |params| {
-                let result = if manifest.owns_key(&params.key) {
-                    api.set_context(params.key, params.value);
-                    Ok(())
-                } else {
-                    Err(ResponseError::new(
-                        ErrorCode::PermissionDenied,
-                        format!(
-                            "context key `{}` is outside the plugin namespace `{}.*`",
-                            params.key,
-                            manifest.namespace()
-                        ),
-                    ))
+    /// Dispatches a request. `enforce` applies the manifest's permissions (WASM plugins).
+    fn call(
+        &self,
+        method: &str,
+        request: Value,
+        enforce: bool,
+    ) -> BoxFuture<'static, Result<Value, ResponseError>> {
+        let manifest = &self.manifest;
+        let plugin = manifest.id().clone();
+        if enforce
+            && let Some(permission) = required_permission(method)
+            && !manifest.has_permission(permission)
+        {
+            let error = ResponseError::new(
+                ErrorCode::PermissionDenied,
+                format!("{plugin} has no permission `{permission}` for `{method}`"),
+            );
+            return Box::pin(std::future::ready(Err(error)));
+        }
+        let ready = |result| -> BoxFuture<'static, _> { Box::pin(std::future::ready(result)) };
+        match method {
+            ExecuteCommand::METHOD => match params(method, request) {
+                Ok(call) => self.api.execute_command(&plugin, call),
+                Err(error) => ready(Err(error)),
+            },
+            SetContext::METHOD => ready(
+                params::<kumiko_protocol::methods::command::SetContextParams>(method, request)
+                    .and_then(|params| {
+                        if !manifest.owns_key(&params.key) {
+                            return Err(ResponseError::new(
+                                ErrorCode::PermissionDenied,
+                                format!(
+                                    "context key `{}` is outside the plugin namespace `{}.*`",
+                                    params.key,
+                                    manifest.namespace()
+                                ),
+                            ));
+                        }
+                        self.api.set_context(params.key, params.value);
+                        result(())
+                    }),
+            ),
+            ServiceCall::METHOD => {
+                let call = match params(method, request) {
+                    Ok(call) => call,
+                    Err(error) => return ready(Err(error)),
                 };
-                std::future::ready(result)
-            })
+                let host = self.host.upgrade().map(|inner| PluginHost { inner });
+                Box::pin(async move {
+                    match host {
+                        Some(host) => host.call_interface(&plugin, call).await,
+                        None => Err(internal("the host is gone")),
+                    }
+                })
+            }
+            _ => ready(Err(ResponseError::new(
+                ErrorCode::MethodNotFound,
+                format!("the host does not implement `{method}` yet"),
+            ))),
+        }
+    }
+}
+
+/// Process plugins: requests arrive over KPP frames.
+impl Handler for Bridge {
+    fn request(&self, method: String, params: Value) -> HandlerFuture {
+        self.call(&method, params, false)
+    }
+}
+
+/// WASM plugins: requests arrive through the `host` import.
+impl WasmHost for Bridge {
+    fn call(
+        &self,
+        method: String,
+        params: Value,
+    ) -> BoxFuture<'static, Result<Value, ResponseError>> {
+        Bridge::call(self, &method, params, true)
+    }
+
+    fn notify(&self, method: String, _params: Value) {
+        tracing::debug!(plugin = %self.manifest.id(), %method, "ignoring a plugin notification");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn methods_map_to_permissions() {
+        assert_eq!(
+            required_permission("fs/read"),
+            Some(Permission::FsWorkspace)
+        );
+        assert_eq!(
+            required_permission("document/applyEdit"),
+            Some(Permission::FsWorkspace)
+        );
+        assert_eq!(
+            required_permission("process/spawn"),
+            Some(Permission::ProcessSpawn)
+        );
+        assert_eq!(
+            required_permission("task/run"),
+            Some(Permission::ProcessSpawn)
+        );
+        assert_eq!(required_permission("task/provide"), None);
+        assert_eq!(required_permission("ui/showMessage"), Some(Permission::Ui));
+        assert_eq!(required_permission("command/execute"), None);
+        assert_eq!(required_permission("service/call"), None);
     }
 }

@@ -8,6 +8,7 @@ use std::pin::Pin;
 
 mod event;
 mod fs;
+pub mod wasm;
 pub mod when;
 
 pub use event::{Event, EventSink};

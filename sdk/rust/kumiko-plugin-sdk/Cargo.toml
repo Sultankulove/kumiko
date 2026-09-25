@@ -13,14 +13,17 @@ workspace = true
 
 [dependencies]
 kumiko-protocol.workspace = true
-kumiko-ipc.workspace = true
 kumiko-types.workspace = true
+kumiko-ipc = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["rt", "sync", "io-std", "io-util", "macros"] }
+wit-bindgen = { workspace = true, optional = true }
 
 [features]
-process = ["dep:serde_json", "dep:thiserror", "dep:tokio"]
+process = ["dep:kumiko-ipc", "dep:serde_json", "dep:thiserror", "dep:tokio"]
+wasm = ["dep:serde", "dep:serde_json", "dep:wit-bindgen"]
 
 [dev-dependencies]
 serde_json.workspace = true

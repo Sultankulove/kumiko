@@ -34,3 +34,16 @@ command = "workbench.quickOpen"
 [[binding]]
 key = "ctrl+shift+p"
 command = "workbench.showCommands"
+
+# Tool windows, as in JetBrains IDEs.
+[[binding]]
+key = "alt+1"
+command = "workbench.toggleProject"
+
+[[binding]]
+key = "alt+6"
+command = "workbench.toggleProblems"
+
+[[binding]]
+key = "ctrl+q"
+command = "workbench.quit"

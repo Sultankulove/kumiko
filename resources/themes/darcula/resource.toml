@@ -1,0 +1,60 @@
+# Colours after IntelliJ IDEA's Classic UI Darcula (IntelliJ Community, Apache-2.0).
+[resource]
+id = "kumiko.theme.darcula"
+kind = "theme"
+version = "0.1.0"
+name = "%theme.darcula%"
+
+[theme]
+base = "dark"
+
+[colors]
+"foreground" = "#BBBBBB"
+"foreground.muted" = "#8C8C8C"
+"editor.background" = "#2B2B2B"
+"editor.foreground" = "#A9B7C6"
+"editor.lineHighlight" = "#323232"
+"editor.selection" = "#214283"
+"editor.cursor" = "#BBBBBB"
+"editor.gutter" = "#313335"
+"editor.lineNumber" = "#606366"
+"editor.lineNumber.active" = "#A4A3A3"
+"window.background" = "#3C3F41"
+"menuBar.background" = "#3C3F41"
+"toolbar.background" = "#3C3F41"
+"toolStripe.background" = "#3C3F41"
+"toolStripe.button.active" = "#2D2F30"
+"panel.background" = "#3C3F41"
+"panel.header" = "#3C3F41"
+"sideBar.background" = "#3C3F41"
+"list.selection" = "#2F65CA"
+"list.selection.inactive" = "#0D293E"
+"list.hover" = "#464A4D"
+"tab.active.background" = "#4E5254"
+"tab.inactive.background" = "#3C3F41"
+"tab.active.underline" = "#4A88C7"
+"statusBar.background" = "#3C3F41"
+"statusBar.foreground" = "#BBBBBB"
+"input.background" = "#45494A"
+"popup.background" = "#3C3F41"
+"border" = "#323232"
+"focusBorder" = "#3D6185"
+"accent" = "#4A88C7"
+"error" = "#BC3F3C"
+"warning" = "#BE9117"
+"info" = "#3592C4"
+
+[syntax]
+"keyword" = "#CC7832"
+"function" = "#FFC66D"
+"type" = "#A9B7C6"
+"string" = "#6A8759"
+"number" = "#6897BB"
+"constant" = { fg = "#9876AA", italic = true }
+"comment" = { fg = "#808080", italic = true }
+"comment.doc" = { fg = "#629755", italic = true }
+"attribute" = "#BBB529"
+"property" = "#9876AA"
+"variable" = "#A9B7C6"
+"operator" = "#A9B7C6"
+"punctuation" = "#CC7832"

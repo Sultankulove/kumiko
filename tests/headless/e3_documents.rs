@@ -134,7 +134,7 @@ async fn workspace_settings_and_resources() {
 
     // Shipped resources are loaded: themes, translations, the default keymap.
     let resources = ide.core.resources();
-    assert_eq!(resources.list(ResourceKind::Theme).len(), 3);
+    assert_eq!(resources.list(ResourceKind::Theme).len(), 4);
     assert_eq!(resources.localize("command.file.save", "ru"), "Сохранить");
     assert!(
         config

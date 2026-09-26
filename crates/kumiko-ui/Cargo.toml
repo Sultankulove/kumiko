@@ -14,3 +14,16 @@ workspace = true
 [dependencies]
 kumiko-core.workspace = true
 kumiko-types.workspace = true
+gpui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "sync"] }
+tracing.workspace = true
+accesskit.workspace = true
+raw-window-handle.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+accesskit_windows.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+accesskit_unix.workspace = true

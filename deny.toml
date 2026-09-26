@@ -7,6 +7,17 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+# Unmaintained (not vulnerable) crates the UI stack pulls in (GPUI 0.2.2, ADR-003). GPUI is pinned;
+# revisit this list on every GPUI upgrade. Vulnerabilities are never ignored here.
+ignore = [
+    { id = "RUSTSEC-2024-0384", reason = "instant, via the UI stack (futures-lite 1)" },
+    { id = "RUSTSEC-2024-0436", reason = "paste, via the UI stack" },
+    { id = "RUSTSEC-2025-0052", reason = "async-std, via the UI stack" },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile, via the UI stack" },
+    { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2, via the UI stack" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser, via the GPUI text stack" },
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz, via the GPUI text stack" },
+]
 
 [licenses]
 version = 2
@@ -27,6 +38,8 @@ allow = [
     "CC0-1.0",
     # File-level copyleft: acceptable as an unmodified dependency (spec, section 24; e.g. nucleo).
     "MPL-2.0",
+    # Permissive, BSD-like (libfuzzer-sys via GPUI -> image -> rav1e).
+    "NCSA",
 ]
 
 [licenses.private]

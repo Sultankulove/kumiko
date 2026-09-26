@@ -17,8 +17,13 @@ jobs:
       - run: rustup show active-toolchain || rustup toolchain install
       - run: cargo fmt --all --check
 
+  # Linux and Windows are both MVP platforms (ADR-020).
   clippy:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - run: rustup show active-toolchain || rustup toolchain install
@@ -28,16 +33,27 @@ jobs:
       - run: cargo clippy -p kumiko-plugin-sdk -p kumiko-echo-wasm --target wasm32-wasip2 --locked -- -D warnings
 
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            wasi-sdk: x86_64-linux
+          - os: windows-latest
+            wasi-sdk: x86_64-windows
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       # The reference WASM plugin in C (MVP criterion 16) is built with wasi-sdk.
       - name: Install wasi-sdk
+        shell: pwsh
         run: |
-          curl -sSfL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-x86_64-linux.tar.gz | tar xz -C "$RUNNER_TEMP"
-          echo "WASI_SDK_PATH=$RUNNER_TEMP/wasi-sdk-34.0-x86_64-linux" >> "$GITHUB_ENV"
+          $name = "wasi-sdk-34.0-${{ matrix.wasi-sdk }}"
+          curl -sSfL "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/$name.tar.gz" -o "$env:RUNNER_TEMP/wasi-sdk.tar.gz"
+          tar -xzf "$env:RUNNER_TEMP/wasi-sdk.tar.gz" -C "$env:RUNNER_TEMP"
+          "WASI_SDK_PATH=$(Join-Path $env:RUNNER_TEMP $name)" >> $env:GITHUB_ENV
       # includes tests/architecture.rs: crate graph and language-agnostic L0/L1
       - run: cargo test --workspace --locked
 

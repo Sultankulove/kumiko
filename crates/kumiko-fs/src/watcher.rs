@@ -339,7 +339,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn reports_created_changed_and_deleted_files() {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
+        let root = kumiko_types::paths::canonicalize(dir.path()).unwrap();
         std::fs::write(root.join("existing.txt"), "a").unwrap();
         std::fs::write(root.join("doomed.txt"), "a").unwrap();
         let sink = Arc::new(Collect::default());
@@ -362,7 +362,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn storm_is_coalesced_and_excludes_apply() {
         let dir = tempfile::tempdir().unwrap();
-        let root = dir.path().canonicalize().unwrap();
+        let root = kumiko_types::paths::canonicalize(dir.path()).unwrap();
         std::fs::create_dir_all(root.join("out")).unwrap();
         std::fs::create_dir_all(root.join("src")).unwrap();
         let sink = Arc::new(Collect::default());
@@ -370,15 +370,21 @@ mod tests {
         watcher.watch(&root).unwrap();
 
         for i in 0..2000 {
-            std::fs::write(root.join(format!("out/f{i}.o")), "x").unwrap();
+            std::fs::write(root.join("out").join(format!("f{i}.o")), "x").unwrap();
         }
         for i in 0..200 {
-            std::fs::write(root.join(format!("src/s{i}.txt")), "x").unwrap();
+            std::fs::write(root.join("src").join(format!("s{i}.txt")), "x").unwrap();
         }
         let batches = sink
             .wait_for(|m| {
                 (0..200).all(|i| {
-                    m.contains_key(&root.join(format!("src/s{i}.txt")).display().to_string())
+                    m.contains_key(
+                        &root
+                            .join("src")
+                            .join(format!("s{i}.txt"))
+                            .display()
+                            .to_string(),
+                    )
                 })
             })
             .await;

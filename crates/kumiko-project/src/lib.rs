@@ -82,7 +82,7 @@ impl ProjectService {
 
     /// Adds a folder (canonicalized); adding it again returns the existing entry.
     pub fn add_folder(&self, path: &Path) -> Result<WorkspaceFolder, ProjectError> {
-        let path = path.canonicalize().map_err(|e| ProjectError::Io {
+        let path = kumiko_types::paths::canonicalize(path).map_err(|e| ProjectError::Io {
             path: path.to_path_buf(),
             message: e.to_string(),
         })?;
@@ -259,7 +259,9 @@ mod tests {
         assert_eq!(project.folders().len(), 1);
         assert!(folder.uri.as_str().starts_with("file:///"));
 
-        let file = dir.path().canonicalize().unwrap().join("x.txt");
+        let file = kumiko_types::paths::canonicalize(dir.path())
+            .unwrap()
+            .join("x.txt");
         assert_eq!(project.folder_of(&file), Some(folder.clone()));
 
         assert!(project.remove_folder(&folder.uri));

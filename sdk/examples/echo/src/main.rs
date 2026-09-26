@@ -5,17 +5,25 @@
 //! - `echo.exit` exits with the given code (a crash, from the host's point of view);
 //! - `echo.hang` never answers (timeouts and cancellation);
 //! - `echo.call [interface, method, params]` calls an interface through the core;
+//! - `echo.spawn` starts a child process that sleeps until killed and returns its pid
+//!   (descendants must not outlive the plugin);
 //! - interface `kumiko.echo.api`, method `ping`, answers with its params and the caller.
 
-use std::process::ExitCode;
+use std::process::{ExitCode, Stdio};
 
 use kumiko_plugin_sdk::process::Plugin;
 use kumiko_plugin_sdk::types::InterfaceId;
 use kumiko_plugin_sdk::{ErrorCode, ResponseError};
 use serde_json::{Value, json};
 
+/// Set in the environment of the child `echo.spawn` starts.
+const SLEEPER: &str = "KUMIKO_ECHO_SLEEPER";
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
+    if std::env::var_os(SLEEPER).is_some() {
+        std::thread::sleep(std::time::Duration::MAX);
+    }
     let plugin = Plugin::new()
         .command(
             "echo.say",
@@ -29,6 +37,18 @@ async fn main() -> ExitCode {
             std::process::exit(i32::try_from(code).unwrap_or(1))
         })
         .command("echo.hang", |_ctx, _args| std::future::pending())
+        .command("echo.spawn", |_ctx, _args| async move {
+            let internal =
+                |e: std::io::Error| ResponseError::new(ErrorCode::InternalError, e.to_string());
+            let child = std::process::Command::new(std::env::current_exe().map_err(internal)?)
+                .env(SLEEPER, "1")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .map_err(internal)?;
+            Ok(json!(child.id()))
+        })
         .command("echo.call", |ctx, args| async move {
             let interface = args.first().and_then(Value::as_str).unwrap_or_default();
             let interface = InterfaceId::new(interface)

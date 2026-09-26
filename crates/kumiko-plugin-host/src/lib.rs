@@ -3,6 +3,8 @@
 //! E4 is in progress: manifests, the plugin store, the registry of contributions and the
 //! supervision of process and WASM plugins with interface routing are in place.
 
+#[cfg(windows)]
+mod job;
 pub mod manifest;
 pub mod registry;
 pub mod store;

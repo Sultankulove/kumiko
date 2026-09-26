@@ -36,7 +36,7 @@ async fn open_edit_save_and_detect_external_changes() {
     assert!(ide.core.project().contains("src/*.txt").await.unwrap());
 
     // Open the file.
-    let uri = Uri::from_file_path(path.canonicalize().unwrap()).unwrap();
+    let uri = Uri::from_file_path(kumiko_types::paths::canonicalize(&path).unwrap()).unwrap();
     let docs = ide.core.documents();
     let doc = docs.open(&uri, Some("plaintext".into())).await.unwrap();
     assert_eq!(doc.text.to_string(), "Hello, world!\nsecond line\n");

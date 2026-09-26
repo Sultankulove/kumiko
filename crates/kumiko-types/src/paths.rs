@@ -125,6 +125,20 @@ pub fn workspace_settings_dir(workspace_root: impl AsRef<Path>) -> PathBuf {
     workspace_root.as_ref().join(WORKSPACE_DIR)
 }
 
+/// `std::fs::canonicalize`, but on Windows without the `\\?\` prefix it puts before drive
+/// paths: compilers and language servers started with such a path often reject it.
+pub fn canonicalize(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
+    let path = std::fs::canonicalize(path)?;
+    #[cfg(windows)]
+    if let Some(local) = path.to_str().and_then(|p| p.strip_prefix(r"\\?\"))
+        && let [drive, b':', b'\\', ..] = local.as_bytes()
+        && drive.is_ascii_alphabetic()
+    {
+        return Ok(PathBuf::from(local));
+    }
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

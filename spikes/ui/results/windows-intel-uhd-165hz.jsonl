@@ -1,0 +1,10 @@
+{"toolkit":"iced","bench":"Start","label":"win-default-gpu","cold_start_ms":8413.8,"frame_ms":{"n":1,"mean":49.20,"p50":49.20,"p95":49.20,"max":49.20,"fps":20.3},"key_to_frame_ms":null,"rss_mb":0.0}
+{"toolkit":"iced","bench":"Scroll","label":"win-default-gpu","cold_start_ms":2398.5,"frame_ms":{"n":599,"mean":6.16,"p50":6.06,"p95":6.86,"max":22.45,"fps":162.4},"key_to_frame_ms":null,"rss_mb":0.0}
+{"toolkit":"iced","bench":"Type","label":"win-default-gpu","cold_start_ms":2421.7,"frame_ms":{"n":600,"mean":6.18,"p50":6.08,"p95":6.75,"max":23.97,"fps":161.9},"key_to_frame_ms":{"n":200,"mean":0.76,"p50":0.71,"p95":1.05,"max":1.72,"fps":1312.7},"rss_mb":0.0}
+{"window":"Kumiko UI spike: iced","label":"win-default-gpu","n":100,"timeouts":0,"p50":22.63,"p95":29.03,"max":61.05,"poll_ms":7.13}
+{"window":"Kumiko UI spike: iced","found":true,"tree":true,"tree_items":925,"focus_type":"ControlType.TreeItem","focus_name":"org.example.core.p0"}
+{"toolkit":"gpui","bench":"Start","label":"win-default-gpu","cold_start_ms":760.5,"frame_ms":null,"key_to_frame_ms":null,"rss_mb":0.0}
+{"toolkit":"gpui","bench":"Scroll","label":"win-default-gpu","cold_start_ms":193.4,"frame_ms":{"n":599,"mean":6.23,"p50":6.05,"p95":6.57,"max":55.02,"fps":160.5},"key_to_frame_ms":null,"rss_mb":0.0}
+{"toolkit":"gpui","bench":"Type","label":"win-default-gpu","cold_start_ms":189.4,"frame_ms":{"n":597,"mean":6.09,"p50":6.07,"p95":6.55,"max":25.02,"fps":164.2},"key_to_frame_ms":{"n":200,"mean":0.06,"p50":0.06,"p95":0.08,"max":1.29,"fps":15708.2},"rss_mb":0.0}
+{"window":"Kumiko UI spike: gpui","label":"win-default-gpu","n":100,"timeouts":0,"p50":12.57,"p95":24.21,"max":25.80,"poll_ms":6.01}
+{"window":"Kumiko UI spike: gpui","found":true,"tree":true,"tree_items":925,"focus_type":"ControlType.TreeItem","focus_name":"org.example.core.p0"}

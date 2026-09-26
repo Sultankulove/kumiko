@@ -8,7 +8,7 @@
 |---|---|---|
 | [001](0001-process-model-and-levels.md) | Модель процессов и уровни L0–L3 | Accepted |
 | [002](0002-ipc-json-rpc-binary-frames.md) | IPC: JSON-RPC 2.0 в бинарных фреймах | Accepted |
-| [003](0003-ui-toolkit.md) | UI-тулкит | Proposed (спайк E6) |
+| [003](0003-ui-toolkit.md) | UI-тулкит | Accepted с условиями (GPUI) |
 | [004](0004-document-ownership.md) | Владение документами в ядре | Accepted |
 | [005](0005-language-api-lsp.md) | Language API = семантика LSP 3.17 | Accepted |
 | [006](0006-debugger-api-dap.md) | Debugger API = DAP | Accepted, реализация после MVP |
@@ -25,3 +25,4 @@
 | [017](0017-shared-runtime-hosts.md) | Общие рантайм-хосты JS/JVM/Python | Proposed (после MVP) |
 | [018](0018-l1-runtime-extensibility.md) | Расширяемость L1 в рантайме | Proposed (после MVP) |
 | [019](0019-cross-service-traits.md) | Трейты взаимодействия сервисов: `kumiko-service-api` | Accepted |
+| [020](0020-windows-in-mvp.md) | Windows — платформа MVP наравне с Linux | Accepted |

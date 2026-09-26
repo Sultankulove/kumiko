@@ -1,0 +1,18 @@
+# UI toolkit spike (spec, section 28, E6; ADR-003). A separate workspace: the candidates'
+# dependency trees must not reach the main build, its lock file, CI or cargo-deny.
+[workspace]
+resolver = "3"
+members = ["workload", "iced-proto", "gpui-proto", "gtk-proto", "latency-probe", "a11y-bridge", "font-probe"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+workload = { path = "workload" }
+a11y-bridge = { path = "a11y-bridge" }
+
+[profile.release]
+debug = "line-tables-only"

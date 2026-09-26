@@ -30,7 +30,9 @@ fn echo_source(dir: &Path) -> PathBuf {
 /// Like [`echo_source`], with an edited manifest.
 fn echo_source_with(dir: &Path, edit: impl FnOnce(String) -> String) -> PathBuf {
     let manifest = fixtures::workspace_root().join("sdk/examples/echo/plugin.toml");
-    let files = [("bin/kumiko-echo", echo_binary())];
+    // The manifest names `bin/kumiko-echo`; on Windows the host finds `bin/kumiko-echo.exe`.
+    let name = format!("bin/kumiko-echo{}", std::env::consts::EXE_SUFFIX);
+    let files = [(name.as_str(), echo_binary())];
     fixtures::plugin_source(dir, "echo-src", &manifest, edit, &files)
 }
 

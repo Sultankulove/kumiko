@@ -211,7 +211,9 @@ fn hello_c(dir: &Path) -> PathBuf {
     let sdk = std::env::var_os("WASI_SDK_PATH").map_or_else(
         || {
             let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
-            PathBuf::from(home.expect("a home directory")).join(".local/wasi-sdk")
+            PathBuf::from(home.expect("a home directory"))
+                .join(".local")
+                .join("wasi-sdk")
         },
         PathBuf::from,
     );

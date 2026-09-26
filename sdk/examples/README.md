@@ -4,7 +4,7 @@
 |---|---|---|---|---|
 | `echo/` | `kumiko.echo` | процесс | Rust, `kumiko-plugin-sdk` (feature `process`) | `cargo build -p kumiko-echo` |
 | `echo-wasm/` | `kumiko.echo-wasm` | WASM | Rust, `kumiko-plugin-sdk` (feature `wasm`) | `cargo build -p kumiko-echo-wasm --release --target wasm32-wasip2` |
-| `hello-c/` | `kumiko.hello-c` | WASM | C, wasi-sdk | `sdk/examples/hello-c/build.sh <каталог>` |
+| `hello-c/` | `kumiko.hello-c` | WASM | C, wasi-sdk | `sdk/examples/hello-c/build.sh <каталог>`, на Windows `build.ps1 <каталог>` |
 
 `echo` и `echo-wasm` — фикстуры тестов Plugin Host: у них есть команды, которые падают, зацикливаются и расходуют память. `hello-c` — эталонный плагин не на Rust (критерий MVP 16). Он показывает, что для WASM-плагина достаточно WIT-пакета `sdk/wit/kumiko-plugin`: протокол KPP идёт через `handle` и `host.call` строками JSON.
 
@@ -12,7 +12,7 @@
 
 ## C и другие языки
 
-Биндинги для C генерирует `wit-bindgen c` (`hello-c/regen-bindings.sh`); готовые лежат в `hello-c/bindings/`. Для сборки нужен [wasi-sdk](https://github.com/WebAssembly/wasi-sdk): путь берётся из `WASI_SDK_PATH`, по умолчанию `~/.local/wasi-sdk`.
+Биндинги для C генерирует `wit-bindgen c` (`hello-c/regen-bindings.sh`); готовые лежат в `hello-c/bindings/`. Для сборки нужен [wasi-sdk](https://github.com/WebAssembly/wasi-sdk): путь берётся из `WASI_SDK_PATH`, по умолчанию `~/.local/wasi-sdk` (на Windows — архив `x86_64-windows`). Тесты собирают плагин сами, без оболочки.
 
 Правила памяти канонического ABI:
 - строки, переданные в экспорт, принадлежат плагину, и он их освобождает;

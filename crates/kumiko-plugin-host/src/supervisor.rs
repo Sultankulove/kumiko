@@ -676,11 +676,8 @@ impl PluginHost {
         let plugin = slot.manifest.id().clone();
         let entry = slot
             .manifest
-            .plugin
-            .entry
-            .as_ref()
-            .ok_or_else(|| "the manifest has no entry".to_owned())?
-            .resolve(&slot.dir);
+            .entry_file(&slot.dir)
+            .ok_or_else(|| "the manifest has no entry".to_owned())?;
         let mut command = Command::new(&entry);
         command
             .current_dir(&slot.dir)

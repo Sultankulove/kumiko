@@ -30,7 +30,9 @@ fn echo_source(dir: &Path) -> PathBuf {
 /// Like [`echo_source`], with an edited manifest.
 fn echo_source_with(dir: &Path, edit: impl FnOnce(String) -> String) -> PathBuf {
     let manifest = fixtures::workspace_root().join("sdk/examples/echo/plugin.toml");
-    let files = [("bin/kumiko-echo", echo_binary())];
+    // The manifest names `bin/kumiko-echo`; on Windows the host finds `bin/kumiko-echo.exe`.
+    let name = format!("bin/kumiko-echo{}", std::env::consts::EXE_SUFFIX);
+    let files = [(name.as_str(), echo_binary())];
     fixtures::plugin_source(dir, "echo-src", &manifest, edit, &files)
 }
 
@@ -73,8 +75,59 @@ fn state_is(state: PluginState) -> impl FnMut(&Event) -> bool {
     }
 }
 
+#[cfg(unix)]
 fn alive(pid: u64) -> bool {
     Path::new(&format!("/proc/{pid}")).exists()
+}
+
+#[cfg(windows)]
+fn alive(pid: u64) -> bool {
+    let output = Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).contains(&format!("\"{pid}\""))
+}
+
+/// Kills the process outright, without letting it clean up.
+fn kill_9(pid: u64) {
+    let pid = pid.to_string();
+    let status = if cfg!(windows) {
+        Command::new("taskkill").args(["/F", "/PID", &pid]).status()
+    } else {
+        Command::new("kill").args(["-9", &pid]).status()
+    };
+    assert!(status.unwrap().success());
+}
+
+async fn spawn_child(ide: &Headless) -> u64 {
+    let child = run(ide, "echo.spawn", vec![])
+        .await
+        .unwrap()
+        .as_u64()
+        .unwrap();
+    assert!(alive(child));
+    child
+}
+
+/// A plugin's descendants die with it: when it is killed, and when it is stopped.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn descendants_do_not_outlive_the_plugin() {
+    let ide = start(3).await;
+    let host = ide.core.plugin_host();
+
+    let child = spawn_child(&ide).await;
+    kill_9(pid(&ide).await);
+    eventually("the child of the killed plugin exits", || !alive(child))
+        .await
+        .unwrap();
+
+    let child = spawn_child(&ide).await;
+    host.stop(&echo()).await;
+    eventually("the child of the stopped plugin exits", || !alive(child))
+        .await
+        .unwrap();
+    ide.core.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -105,11 +158,7 @@ async fn kill_9_restarts_the_plugin_and_the_core_survives() {
     assert_eq!(host.pid(&echo()).map(u64::from), Some(first));
 
     // kill -9: Crashed, then restarted with a new process.
-    let status = Command::new("kill")
-        .args(["-9", &first.to_string()])
-        .status()
-        .unwrap();
-    assert!(status.success());
+    kill_9(first);
     wait_for(&mut events, "Crashed", state_is(PluginState::Crashed))
         .await
         .unwrap();

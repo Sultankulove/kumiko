@@ -28,6 +28,10 @@ title = "Echo: never answer"
 id = "echo.call"
 title = "Echo: call an interface method"
 
+[[contributes.commands]]
+id = "echo.spawn"
+title = "Echo: start a child process"
+
 # An interface the plugin provides and, to exercise routing through the core, also consumes.
 [[provides]]
 interface = "kumiko.echo.api"

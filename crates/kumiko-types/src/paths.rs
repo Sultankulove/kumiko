@@ -27,17 +27,23 @@ pub struct KumikoDirs {
 
 impl KumikoDirs {
     /// Platform directories: `$XDG_CONFIG_HOME/kumiko`, `$XDG_DATA_HOME/kumiko`,
-    /// `$XDG_STATE_HOME/kumiko`, `$XDG_CACHE_HOME/kumiko` on Linux.
+    /// `$XDG_STATE_HOME/kumiko`, `$XDG_CACHE_HOME/kumiko` on Linux. On Windows (ADR-020) only
+    /// the configuration roams, `%APPDATA%\kumiko\config`; data, state and cache stay on the
+    /// machine, in `%LOCALAPPDATA%\kumiko\{data,state,cache}`.
     pub fn from_env() -> Result<Self, PathsError> {
         let dirs =
             directories::ProjectDirs::from("", "", APP_NAME).ok_or(PathsError::NoHomeDirectory)?;
+        // Windows has no state directory; `data_local_dir` is `%LOCALAPPDATA%\kumiko\data`.
+        #[cfg(windows)]
+        let state = dirs.data_local_dir().with_file_name("state");
+        #[cfg(not(windows))]
         let state = dirs
             .state_dir()
             .unwrap_or_else(|| dirs.data_local_dir())
             .to_path_buf();
         Ok(Self {
             config: dirs.config_dir().to_path_buf(),
-            data: dirs.data_dir().to_path_buf(),
+            data: dirs.data_local_dir().to_path_buf(),
             state,
             cache: dirs.cache_dir().to_path_buf(),
         })
@@ -125,6 +131,20 @@ pub fn workspace_settings_dir(workspace_root: impl AsRef<Path>) -> PathBuf {
     workspace_root.as_ref().join(WORKSPACE_DIR)
 }
 
+/// `std::fs::canonicalize`, but on Windows without the `\\?\` prefix it puts before drive
+/// paths: compilers and language servers started with such a path often reject it.
+pub fn canonicalize(path: impl AsRef<Path>) -> std::io::Result<PathBuf> {
+    let path = std::fs::canonicalize(path)?;
+    #[cfg(windows)]
+    if let Some(local) = path.to_str().and_then(|p| p.strip_prefix(r"\\?\"))
+        && let [drive, b':', b'\\', ..] = local.as_bytes()
+        && drive.is_ascii_alphabetic()
+    {
+        return Ok(PathBuf::from(local));
+    }
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,5 +193,24 @@ mod tests {
             assert_eq!(dir.file_name().unwrap(), APP_NAME, "{}", dir.display());
         }
         assert_ne!(dirs.config_dir(), dirs.data_dir());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_keeps_only_configuration_roaming() {
+        let dirs = KumikoDirs::from_env().unwrap();
+        let roaming = std::env::var_os("APPDATA").unwrap();
+        let local = std::env::var_os("LOCALAPPDATA").unwrap();
+        assert_eq!(
+            dirs.config_dir(),
+            Path::new(&roaming).join(r"kumiko\config")
+        );
+        for (dir, name) in [
+            (dirs.data_dir(), "data"),
+            (dirs.state_dir(), "state"),
+            (dirs.cache_dir(), "cache"),
+        ] {
+            assert_eq!(dir, Path::new(&local).join("kumiko").join(name));
+        }
     }
 }

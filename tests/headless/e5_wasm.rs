@@ -204,19 +204,42 @@ async fn memory_limits_and_repeated_traps() {
     assert!(core.config().get("editor.tabSize", None).is_some());
 }
 
-/// Builds `sdk/examples/hello-c` with wasi-sdk (`WASI_SDK_PATH`, by default ~/.local/wasi-sdk).
+/// Builds `sdk/examples/hello-c` with wasi-sdk (`WASI_SDK_PATH`, by default ~/.local/wasi-sdk)
+/// like its `build.sh` does, without a shell, so it runs on Windows as well.
 fn hello_c(dir: &Path) -> PathBuf {
     let example = fixtures::workspace_root().join("sdk/examples/hello-c");
-    let out = dir.join("hello-c-build");
-    let status = std::process::Command::new("bash")
-        .arg(example.join("build.sh"))
-        .arg(&out)
-        .status()
-        .expect("bash runs");
-    assert!(
-        status.success(),
-        "building the C plugin failed; is wasi-sdk installed?"
+    let sdk = std::env::var_os("WASI_SDK_PATH").map_or_else(
+        || {
+            let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+            PathBuf::from(home.expect("a home directory"))
+                .join(".local")
+                .join("wasi-sdk")
+        },
+        PathBuf::from,
     );
+    let clang = sdk
+        .join("bin/clang")
+        .with_extension(std::env::consts::EXE_EXTENSION);
+    assert!(
+        clang.exists(),
+        "wasi-sdk not found at {}; set WASI_SDK_PATH",
+        sdk.display()
+    );
+    let out = dir.join("hello-c-build");
+    std::fs::create_dir_all(&out).unwrap();
+    let bindings = example.join("bindings");
+    let status = std::process::Command::new(clang)
+        .args(["--target=wasm32-wasip2", "-O2", "-mexec-model=reactor"])
+        .args(["-Wall", "-Wextra", "-Werror", "-I"])
+        .arg(&bindings)
+        .arg("-o")
+        .arg(out.join("plugin.wasm"))
+        .arg(example.join("src/hello.c"))
+        .arg(bindings.join("kumiko_plugin.c"))
+        .arg(bindings.join("kumiko_plugin_component_type.o"))
+        .status()
+        .expect("clang runs");
+    assert!(status.success(), "building the C plugin failed");
     let files = [("plugin.wasm", out.join("plugin.wasm"))];
     let files: Vec<(&str, &Path)> = files.iter().map(|(n, p)| (*n, p.as_path())).collect();
     fixtures::plugin_source(

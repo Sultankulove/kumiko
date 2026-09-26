@@ -333,6 +333,23 @@ impl Manifest {
         &self.plugin.id
     }
 
+    /// The entry file inside `plugin_dir`. On Windows a process entry without an extension
+    /// also matches `<entry>.exe`, so one manifest serves both platforms.
+    pub fn entry_file(&self, plugin_dir: &Path) -> Option<PathBuf> {
+        let path = self.plugin.entry.as_ref()?.resolve(plugin_dir);
+        if cfg!(windows)
+            && self.plugin.kind == PluginKind::Process
+            && path.extension().is_none()
+            && !path.is_file()
+        {
+            let exe = path.with_extension(std::env::consts::EXE_EXTENSION);
+            if exe.is_file() {
+                return Some(exe);
+            }
+        }
+        Some(path)
+    }
+
     /// The plugin's own prefix for commands, settings and context keys: the last segment of its
     /// id (`java` for `kumiko.java`). Writing outside it is refused (spec, sections 11 and 22).
     pub fn namespace(&self) -> &str {

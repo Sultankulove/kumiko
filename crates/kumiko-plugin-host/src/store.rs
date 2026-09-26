@@ -134,7 +134,9 @@ impl PluginStore {
     pub fn install(&self, source: &Path) -> Result<InstalledPlugin, StoreError> {
         let manifest = read_manifest(source)?;
         if let Some(entry) = &manifest.plugin.entry
-            && !entry.resolve(source).is_file()
+            && !manifest
+                .entry_file(source)
+                .is_some_and(|file| file.is_file())
         {
             return Err(StoreError::MissingEntry {
                 dir: source.to_owned(),

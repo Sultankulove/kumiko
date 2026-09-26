@@ -17,6 +17,8 @@ pub enum UriError {
     MissingScheme(String),
     #[error("`{0}` is not an absolute path")]
     RelativePath(PathBuf),
+    #[error("`{0}` cannot be expressed as a file URI")]
+    Unrepresentable(PathBuf),
 }
 
 /// An absolute URI such as `file:///home/me/project/Main.txt` or `untitled:1`.
@@ -33,15 +35,23 @@ impl Uri {
         Ok(Self(value))
     }
 
-    /// Builds a `file://` URI, percent-encoding everything except unreserved characters and `/`.
+    /// Builds a `file:` URI, percent-encoding everything except unreserved characters, `/`
+    /// and a drive letter's `:`. Windows paths map as in RFC 8089: `C:\a` → `file:///C:/a`
+    /// (drive letter upper-cased), `\\server\share\a` → `file://server/share/a`; the `\\?\`
+    /// prefix of canonical paths is dropped.
     pub fn from_file_path(path: impl AsRef<Path>) -> Result<Self, UriError> {
         let path = path.as_ref();
         if !path.is_absolute() {
             return Err(UriError::RelativePath(path.to_path_buf()));
         }
-        let mut uri = String::from("file://");
-        for &byte in path_bytes(path).iter() {
-            if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
+        let bytes = uri_path(path)?;
+        let mut uri = String::from("file:");
+        if !bytes.starts_with(b"//") {
+            uri.push_str("//");
+        }
+        for (i, &byte) in bytes.iter().enumerate() {
+            let drive_colon = i == 2 && byte == b':' && bytes[1].is_ascii_alphabetic();
+            if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) || drive_colon {
                 uri.push(char::from(byte));
             } else {
                 uri.push_str(&format!("%{byte:02X}"));
@@ -60,14 +70,11 @@ impl Uri {
         &self.0[..len]
     }
 
-    /// Local path for a `file:` URI without authority; `None` for any other URI.
+    /// Local path for a `file:` URI; `None` for any other URI. An authority (a UNC server)
+    /// is accepted on Windows only.
     pub fn to_file_path(&self) -> Option<PathBuf> {
         let encoded = self.0.strip_prefix("file://")?;
-        if !encoded.starts_with('/') {
-            return None;
-        }
-        let bytes = percent_decode(encoded)?;
-        Some(path_from_bytes(bytes))
+        path_from_uri_path(percent_decode(encoded)?)
     }
 }
 
@@ -99,27 +106,90 @@ fn percent_decode(value: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// The URI path of an absolute local path, before percent-encoding: `/home/me` on Unix.
 #[cfg(unix)]
-fn path_bytes(path: &Path) -> Cow<'_, [u8]> {
+fn uri_path(path: &Path) -> Result<Cow<'_, [u8]>, UriError> {
     use std::os::unix::ffi::OsStrExt;
-    Cow::Borrowed(path.as_os_str().as_bytes())
+    Ok(Cow::Borrowed(path.as_os_str().as_bytes()))
 }
 
+/// The decoded part of a `file://` URI after the scheme: a path starting with `/`.
 #[cfg(unix)]
-fn path_from_bytes(bytes: Vec<u8>) -> PathBuf {
+fn path_from_uri_path(bytes: Vec<u8>) -> Option<PathBuf> {
     use std::os::unix::ffi::OsStringExt;
-    PathBuf::from(std::ffi::OsString::from_vec(bytes))
+    bytes
+        .starts_with(b"/")
+        .then(|| PathBuf::from(std::ffi::OsString::from_vec(bytes)))
 }
 
-// TODO(platforms): Windows drive letters and UNC paths need their own mapping (spec, section 27).
-#[cfg(not(unix))]
-fn path_bytes(path: &Path) -> Cow<'_, [u8]> {
-    Cow::Owned(path.to_string_lossy().replace('\\', "/").into_bytes())
+/// The URI path of an absolute local path (WASI): `/dir`, which must be Unicode.
+#[cfg(not(any(unix, windows)))]
+fn uri_path(path: &Path) -> Result<Cow<'_, [u8]>, UriError> {
+    let text = path
+        .to_str()
+        .ok_or_else(|| UriError::Unrepresentable(path.to_path_buf()))?;
+    Ok(Cow::Borrowed(text.as_bytes()))
 }
 
-#[cfg(not(unix))]
-fn path_from_bytes(bytes: Vec<u8>) -> PathBuf {
-    PathBuf::from(String::from_utf8_lossy(&bytes).into_owned())
+#[cfg(not(any(unix, windows)))]
+fn path_from_uri_path(bytes: Vec<u8>) -> Option<PathBuf> {
+    let text = String::from_utf8(bytes).ok()?;
+    text.starts_with('/').then(|| PathBuf::from(text))
+}
+
+/// The URI path of an absolute local path, before percent-encoding: `/C:/Users/me` for a
+/// drive path, `//server/share/dir` for a UNC path (the server becomes the authority).
+#[cfg(windows)]
+fn uri_path(path: &Path) -> Result<Cow<'_, [u8]>, UriError> {
+    let unrepresentable = || UriError::Unrepresentable(path.to_path_buf());
+    let text = path
+        .to_str()
+        .ok_or_else(unrepresentable)?
+        .replace('\\', "/");
+    let text = if let Some(unc) = text.strip_prefix("//?/UNC/") {
+        format!("//{unc}")
+    } else if let Some(local) = text.strip_prefix("//?/") {
+        local.to_owned()
+    } else {
+        text
+    };
+    if text.starts_with("//") {
+        // `//./` and `//?/` name devices, not files.
+        return match text.as_bytes().get(2) {
+            Some(b'.' | b'?') => Err(unrepresentable()),
+            _ => Ok(Cow::Owned(text.into_bytes())),
+        };
+    }
+    match text.as_bytes() {
+        [drive, b':', rest @ ..] if drive.is_ascii_alphabetic() => {
+            let mut out = vec![b'/', drive.to_ascii_uppercase(), b':'];
+            out.extend_from_slice(rest);
+            if rest.is_empty() {
+                out.push(b'/');
+            }
+            Ok(Cow::Owned(out))
+        }
+        _ => Err(unrepresentable()),
+    }
+}
+
+/// The decoded part of a `file://` URI after the scheme: `/C:/dir` (or `/c%3A/dir`, as
+/// VS Code writes it) for a drive path, `server/share/dir` for a UNC path.
+#[cfg(windows)]
+fn path_from_uri_path(bytes: Vec<u8>) -> Option<PathBuf> {
+    let text = String::from_utf8(bytes).ok()?;
+    let path = match text.strip_prefix('/') {
+        Some(local) => match local.as_bytes() {
+            [drive, b':', ..] if drive.is_ascii_alphabetic() => {
+                let rest = if local.len() == 2 { "/" } else { &local[2..] };
+                format!("{}:{rest}", char::from(drive.to_ascii_uppercase()))
+            }
+            _ => return None,
+        },
+        None if text.is_empty() || text.starts_with('/') => return None,
+        None => format!("//{text}"),
+    };
+    Some(PathBuf::from(path.replace('/', "\\")))
 }
 
 impl TryFrom<String> for Uri {
@@ -199,16 +269,68 @@ mod tests {
         assert_eq!(uri.to_file_path().unwrap(), path);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_round_trip() {
+        let cases = [
+            (
+                r"C:\Users\me\My Project\Ünï%code.txt",
+                "file:///C:/Users/me/My%20Project/%C3%9Cn%C3%AF%25code.txt",
+            ),
+            (r"D:\", "file:///D:/"),
+            (r"\\server\share\dir\a.txt", "file://server/share/dir/a.txt"),
+        ];
+        for (path, expected) in cases {
+            let uri = Uri::from_file_path(path).unwrap();
+            assert_eq!(uri.as_str(), expected);
+            assert_eq!(uri.to_file_path().unwrap(), Path::new(path));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_paths_are_normalized() {
+        let same = [r"c:\a\b.txt", r"\\?\C:\a\b.txt", r"C:/a/b.txt"];
+        for path in same {
+            assert_eq!(
+                Uri::from_file_path(path).unwrap().as_str(),
+                "file:///C:/a/b.txt",
+                "{path}"
+            );
+        }
+        assert_eq!(
+            Uri::from_file_path(r"\\?\UNC\server\share\a")
+                .unwrap()
+                .as_str(),
+            "file://server/share/a"
+        );
+        // VS Code encodes the drive colon and lower-cases the letter.
+        let vscode = Uri::parse("file:///c%3A/a/b.txt").unwrap();
+        assert_eq!(vscode.to_file_path().unwrap(), Path::new(r"C:\a\b.txt"));
+        assert!(Uri::from_file_path(r"\\.\pipe\name").is_err());
+        assert!(
+            Uri::parse("file:///home/me")
+                .unwrap()
+                .to_file_path()
+                .is_none()
+        );
+    }
+
     #[test]
     fn non_file_uris_have_no_path() {
         assert!(Uri::parse("untitled:1").unwrap().to_file_path().is_none());
+        assert!(Uri::from_file_path("relative/path").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_file_uris_have_no_authority() {
         assert!(
             Uri::parse("file://host/share")
                 .unwrap()
                 .to_file_path()
                 .is_none()
         );
-        assert!(Uri::from_file_path("relative/path").is_err());
     }
 
     #[test]

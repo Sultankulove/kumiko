@@ -676,11 +676,8 @@ impl PluginHost {
         let plugin = slot.manifest.id().clone();
         let entry = slot
             .manifest
-            .plugin
-            .entry
-            .as_ref()
-            .ok_or_else(|| "the manifest has no entry".to_owned())?
-            .resolve(&slot.dir);
+            .entry_file(&slot.dir)
+            .ok_or_else(|| "the manifest has no entry".to_owned())?;
         let mut command = Command::new(&entry);
         command
             .current_dir(&slot.dir)
@@ -712,6 +709,7 @@ impl PluginHost {
             return Err("the process has no stdio pipes".into());
         };
         let pid = child.id();
+        let tree = ProcessTree::new(&child, &plugin);
 
         let log_plugin = plugin.clone();
         tokio::spawn(async move {
@@ -729,7 +727,7 @@ impl PluginHost {
         let monitored = slot.clone();
         let monitor_peer = peer.clone();
         tokio::spawn(async move {
-            let status = monitor(child, pid, signals).await;
+            let status = monitor(child, tree, signals).await;
             monitor_peer.close();
             host.exited(&monitored, generation, status);
             // After the state change, so a stop() that waits for this sees the final state.
@@ -868,21 +866,25 @@ async fn wait_exit(exited: &mut watch::Receiver<bool>, timeout: Duration) -> boo
 }
 
 /// Waits for the process, delivering signals asked for meanwhile; returns its exit status.
+/// Descendants do not outlive the plugin: once it exits, what is left of its tree is killed.
 async fn monitor(
     mut child: Child,
-    pid: Option<u32>,
+    tree: ProcessTree,
     mut signals: mpsc::UnboundedReceiver<bool>,
 ) -> String {
     loop {
         tokio::select! {
             status = child.wait() => {
+                // On Unix the group id stays reserved while any member lives, so this reaches
+                // only the plugin's descendants (or nobody).
+                tree.signal(true);
                 return match status {
                     Ok(status) => status.to_string(),
                     Err(error) => format!("wait failed: {error}"),
                 };
             }
             Some(force) = signals.recv() => {
-                signal_group(pid, force);
+                tree.signal(force);
                 if force {
                     let _ = child.start_kill();
                 }
@@ -891,22 +893,53 @@ async fn monitor(
     }
 }
 
-/// SIGTERM or SIGKILL to the plugin's process group.
-#[cfg(unix)]
-fn signal_group(pid: Option<u32>, force: bool) {
-    use rustix::process::{Pid, Signal, kill_process_group};
-    let Some(pid) = pid
-        .and_then(|p| i32::try_from(p).ok())
-        .and_then(Pid::from_raw)
-    else {
-        return;
-    };
-    let signal = if force { Signal::KILL } else { Signal::TERM };
-    let _ = kill_process_group(pid, signal);
+/// A process plugin and its descendants: the process group it leads on Unix, a Job Object
+/// on Windows. The only place where stopping a plugin depends on the OS.
+struct ProcessTree {
+    #[cfg(unix)]
+    group: Option<rustix::process::Pid>,
+    #[cfg(windows)]
+    job: Option<crate::job::Job>,
 }
 
-#[cfg(not(unix))]
-fn signal_group(_pid: Option<u32>, _force: bool) {}
+impl ProcessTree {
+    #[cfg_attr(not(windows), allow(unused_variables))]
+    fn new(child: &Child, plugin: &PluginId) -> Self {
+        Self {
+            #[cfg(unix)]
+            group: child
+                .id()
+                .and_then(|p| i32::try_from(p).ok())
+                .and_then(rustix::process::Pid::from_raw),
+            #[cfg(windows)]
+            job: child
+                .raw_handle()
+                .and_then(|process| match crate::job::Job::assign(process) {
+                    Ok(job) => Some(job),
+                    Err(error) => {
+                        tracing::warn!(%plugin, "no job object, children may outlive stops: {error}");
+                        None
+                    }
+                }),
+        }
+    }
+
+    /// Asks the tree to terminate (SIGTERM; Windows has no such request, the stop sequence's
+    /// `exit` notification plays its part) or kills it (SIGKILL, `TerminateJobObject`).
+    #[cfg_attr(not(any(unix, windows)), allow(unused_variables))]
+    fn signal(&self, force: bool) {
+        #[cfg(unix)]
+        if let Some(group) = self.group {
+            use rustix::process::{Signal, kill_process_group};
+            let signal = if force { Signal::KILL } else { Signal::TERM };
+            let _ = kill_process_group(group, signal);
+        }
+        #[cfg(windows)]
+        if force && let Some(job) = &self.job {
+            job.terminate();
+        }
+    }
+}
 
 /// The permission a plugin-to-host method needs (spec, section 13).
 fn required_permission(method: &str) -> Option<Permission> {

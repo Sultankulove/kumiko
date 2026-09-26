@@ -1,0 +1,10 @@
+[package]
+name = "font-probe"
+description = "How long cosmic-text takes to load the system fonts, and a narrow alternative."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+cosmic-text = "0.15"

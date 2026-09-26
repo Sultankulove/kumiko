@@ -1,0 +1,13 @@
+[package]
+name = "gpui-proto"
+description = "UI spike: GPUI 0.2 (Zed's toolkit) with an editor view and a file tree."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+workload.workspace = true
+a11y-bridge.workspace = true
+gpui = "0.2.2"
+raw-window-handle = "0.6"

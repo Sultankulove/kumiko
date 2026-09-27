@@ -60,3 +60,16 @@ command = "workbench.nextEditor"
 [[binding]]
 key = "alt+left"
 command = "workbench.previousEditor"
+
+# Navigation as in JetBrains IDEs, next to ctrl+p / ctrl+shift+p.
+[[binding]]
+key = "ctrl+shift+n"
+command = "workbench.quickOpen"
+
+[[binding]]
+key = "ctrl+shift+a"
+command = "workbench.showCommands"
+
+[[binding]]
+key = "ctrl+g"
+command = "workbench.gotoLine"

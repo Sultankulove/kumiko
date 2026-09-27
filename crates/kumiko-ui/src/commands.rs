@@ -11,12 +11,15 @@ use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::layout::ToolWindow;
+use crate::quick_open::Mode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UiCommand {
     Toggle(ToolWindow),
     /// `workbench.openFile [uri]`
     OpenFile(Uri),
+    /// Quick Open in a mode: files, commands, a line.
+    QuickOpen(Mode),
     CloseEditor,
     NextEditor,
     PreviousEditor,
@@ -38,6 +41,15 @@ const COMMANDS: &[(&str, Parse)] = &[
         Ok(UiCommand::Toggle(ToolWindow::Output))
     }),
     ("workbench.openFile", open_file),
+    ("workbench.quickOpen", |_| {
+        Ok(UiCommand::QuickOpen(Mode::Files))
+    }),
+    ("workbench.showCommands", |_| {
+        Ok(UiCommand::QuickOpen(Mode::Commands))
+    }),
+    ("workbench.gotoLine", |_| {
+        Ok(UiCommand::QuickOpen(Mode::Line))
+    }),
     ("workbench.closeEditor", |_| Ok(UiCommand::CloseEditor)),
     ("workbench.nextEditor", |_| Ok(UiCommand::NextEditor)),
     ("workbench.previousEditor", |_| {

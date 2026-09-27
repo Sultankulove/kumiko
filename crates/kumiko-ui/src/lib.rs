@@ -13,10 +13,12 @@ use tokio::runtime::Handle;
 
 mod a11y;
 mod commands;
+mod input;
 mod keys;
 pub mod layout;
 mod menus;
 mod palette;
+mod quick_open;
 mod tabs;
 mod tree;
 mod workbench;

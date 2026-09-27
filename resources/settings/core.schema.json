@@ -7,7 +7,18 @@
     "workbench.theme": { "type": "string", "default": "kumiko.theme.darcula" },
     "workbench.locale": { "type": ["string", "null"], "default": null, "description": "UI language; null follows LANG." },
     "files.eol": { "enum": ["auto", "lf", "crlf"], "default": "auto", "description": "Line endings of new files; existing files keep theirs." },
-    "files.exclude": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Globs hidden from the file tree and searches." },
+    "files.exclude": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": ["**/.git", "**/.hg", "**/.svn", "**/CVS", "**/.DS_Store"],
+      "description": "Globs hidden from the file tree and searches."
+    },
+    "search.ignoreFiles": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [".gitignore", ".ignore"],
+      "description": "Names of files whose patterns hide files from Quick Open and searches."
+    },
     "files.watcherExclude": {
       "type": "array",
       "items": { "type": "string" },

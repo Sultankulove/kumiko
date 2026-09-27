@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio::task::JoinHandle;
@@ -20,6 +21,7 @@ pub use kumiko_plugin_host as plugin_host;
 pub use kumiko_project as project;
 pub use kumiko_protocol as protocol;
 pub use kumiko_resources as resources;
+pub use kumiko_search as search;
 pub use kumiko_service_api as service_api;
 pub use kumiko_wasm_host as wasm_host;
 
@@ -32,8 +34,9 @@ use kumiko_fs::{FsWatcher, LocalFileSystem, WatchError, WatcherConfig};
 use kumiko_plugin_host::{PluginHost, PluginRegistry, StoreError, SupervisorConfig};
 use kumiko_project::{ProjectError, ProjectService};
 use kumiko_protocol::common::WorkspaceFolder;
-use kumiko_protocol::events::{ConfigChanged, FsChanged};
+use kumiko_protocol::events::{ConfigChanged, FsChangeKind, FsChanged};
 use kumiko_resources::{ResourceKind, ResourceRegistry};
+use kumiko_search::{FileIndex, IndexRoot};
 use kumiko_service_api::EventSink;
 use kumiko_service_api::wasm::WasmRuntime;
 use kumiko_types::paths::workspace_settings_dir;
@@ -45,6 +48,9 @@ mod plugins;
 /// Settings the core itself reacts to.
 const WATCHER_EXCLUDE: &str = "files.watcherExclude";
 const FILES_EXCLUDE: &str = "files.exclude";
+const IGNORE_FILES: &str = "search.ignoreFiles";
+/// Quiet time before the file index is rebuilt after changes.
+const REINDEX_DELAY: Duration = Duration::from_millis(300);
 
 #[derive(Debug, thiserror::Error)]
 pub enum CoreError {
@@ -101,6 +107,8 @@ struct Inner {
     documents: Arc<DocumentService>,
     project: Arc<ProjectService>,
     resources: Arc<ResourceRegistry>,
+    files: Arc<FileIndex>,
+    reindex: Arc<tokio::sync::Notify>,
     plugins: plugins::PluginManager,
     tasks: Mutex<Vec<JoinHandle<()>>>,
 }
@@ -218,11 +226,14 @@ impl CoreApi {
                 documents,
                 project,
                 resources,
+                files: Arc::new(FileIndex::new()),
+                reindex: Arc::new(tokio::sync::Notify::new()),
                 plugins,
                 tasks: Mutex::default(),
             }),
         };
         core.spawn_wiring();
+        core.spawn_indexer();
         Ok(core)
     }
 
@@ -232,73 +243,139 @@ impl CoreApi {
         let mut subscriber = inner
             .events
             .subscribe(EventFilter::topics(["fs.changed", "config.changed"]));
-        let (events, config, documents, watcher, project) = (
+        let (events, config, documents, watcher, project, reindex) = (
             inner.events.clone(),
             inner.config.clone(),
             inner.documents.clone(),
             inner.watcher.clone(),
             inner.project.clone(),
+            inner.reindex.clone(),
         );
         let user_keymap = inner.options.dirs.user_keymap_file();
-        let task = tokio::spawn(async move {
-            while let Some(delivery) = subscriber.recv().await {
-                let event = match delivery {
-                    Delivery::Event(event) => event,
-                    Delivery::Resync(topics) => {
-                        // Lost state: re-read everything we derive from events.
-                        tracing::warn!(?topics, "core wiring resyncs");
-                        config.reload();
-                        for doc in documents.list() {
-                            let _ = documents.external_change(&doc.uri).await;
-                        }
-                        subscriber =
-                            events.subscribe(EventFilter::topics(["fs.changed", "config.changed"]));
-                        continue;
-                    }
-                };
-                if let Some(Ok(batch)) = event.decode::<FsChanged>() {
-                    let config_files = config.files();
-                    let mut reload_config = false;
-                    for change in batch.changes {
-                        let Some(path) = change.uri.to_file_path() else {
+        let task =
+            tokio::spawn(async move {
+                while let Some(delivery) = subscriber.recv().await {
+                    let event = match delivery {
+                        Delivery::Event(event) => event,
+                        Delivery::Resync(topics) => {
+                            // Lost state: re-read everything we derive from events.
+                            tracing::warn!(?topics, "core wiring resyncs");
+                            config.reload();
+                            for doc in documents.list() {
+                                let _ = documents.external_change(&doc.uri).await;
+                            }
+                            subscriber = events
+                                .subscribe(EventFilter::topics(["fs.changed", "config.changed"]));
                             continue;
-                        };
-                        // An ancestor counts too: a file created together with its new
-                        // directory may be reported only as the directory's creation.
-                        if config_files.iter().any(|file| file.starts_with(&path)) {
-                            reload_config = true;
                         }
-                        if path == user_keymap {
-                            config.load_keymap_file(KeymapSource::User, &path);
+                    };
+                    if let Some(Ok(batch)) = event.decode::<FsChanged>() {
+                        if batch.changes.iter().any(|c| {
+                            matches!(c.kind, FsChangeKind::Created | FsChangeKind::Deleted)
+                        }) {
+                            reindex.notify_one();
                         }
-                        if let Err(error) = documents.external_change(&change.uri).await {
-                            tracing::warn!(uri = %change.uri, %error, "external change failed");
+                        let config_files = config.files();
+                        let mut reload_config = false;
+                        for change in batch.changes {
+                            let Some(path) = change.uri.to_file_path() else {
+                                continue;
+                            };
+                            // An ancestor counts too: a file created together with its new
+                            // directory may be reported only as the directory's creation.
+                            if config_files.iter().any(|file| file.starts_with(&path)) {
+                                reload_config = true;
+                            }
+                            if path == user_keymap {
+                                config.load_keymap_file(KeymapSource::User, &path);
+                            }
+                            if let Err(error) = documents.external_change(&change.uri).await {
+                                tracing::warn!(uri = %change.uri, %error, "external change failed");
+                            }
                         }
-                    }
-                    if reload_config {
-                        config.reload();
-                    }
-                } else if let Some(Ok(changed)) = event.decode::<ConfigChanged>() {
-                    if changed.keys.iter().any(|k| k == WATCHER_EXCLUDE)
-                        && let Err(error) =
-                            watcher.set_exclude(&string_list(config.get(WATCHER_EXCLUDE, None)))
-                    {
-                        tracing::warn!(%error, "invalid watcher excludes");
-                    }
-                    if changed.keys.iter().any(|k| k == FILES_EXCLUDE)
-                        && let Err(error) =
-                            project.set_exclude(&string_list(config.get(FILES_EXCLUDE, None)))
-                    {
-                        tracing::warn!(%error, "invalid file excludes");
+                        if reload_config {
+                            config.reload();
+                        }
+                    } else if let Some(Ok(changed)) = event.decode::<ConfigChanged>() {
+                        if changed.keys.iter().any(|k| k == WATCHER_EXCLUDE)
+                            && let Err(error) =
+                                watcher.set_exclude(&string_list(config.get(WATCHER_EXCLUDE, None)))
+                        {
+                            tracing::warn!(%error, "invalid watcher excludes");
+                        }
+                        if changed.keys.iter().any(|k| k == FILES_EXCLUDE)
+                            && let Err(error) =
+                                project.set_exclude(&string_list(config.get(FILES_EXCLUDE, None)))
+                        {
+                            tracing::warn!(%error, "invalid file excludes");
+                        }
+                        if changed
+                            .keys
+                            .iter()
+                            .any(|k| k == FILES_EXCLUDE || k == IGNORE_FILES)
+                        {
+                            reindex.notify_one();
+                        }
                     }
                 }
-            }
-        });
+            });
         inner
             .tasks
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .push(task);
+    }
+
+    /// Rebuilds the file index a moment after it was asked to, once changes settle.
+    fn spawn_indexer(&self) {
+        // A weak handle: the task must not keep the core alive (its tasks stop on drop).
+        let core = Arc::downgrade(&self.inner);
+        let requests = self.inner.reindex.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                requests.notified().await;
+                tokio::time::sleep(REINDEX_DELAY).await;
+                let Some(inner) = core.upgrade() else { break };
+                CoreApi { inner }.reindex_files().await;
+            }
+        });
+        self.inner
+            .tasks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(task);
+    }
+
+    /// Rebuilds the file index of Quick Open now (on a blocking thread) and waits for it.
+    pub async fn reindex_files(&self) {
+        let roots: Vec<IndexRoot> = self
+            .inner
+            .project
+            .folders()
+            .into_iter()
+            .filter_map(|f| {
+                Some(IndexRoot {
+                    path: f.uri.to_file_path()?,
+                    name: f.name,
+                })
+            })
+            .collect();
+        let ignore_files = string_list(self.inner.config.get(IGNORE_FILES, None));
+        let project = self.inner.project.clone();
+        let files = self.inner.files.clone();
+        let rebuilt = tokio::task::spawn_blocking(move || {
+            let exclude = Arc::new(move |path: &Path| project.is_excluded(path));
+            files.rebuild(&roots, &ignore_files, exclude);
+        })
+        .await;
+        if let Err(error) = rebuilt {
+            tracing::warn!("indexing files failed: {error}");
+        }
+    }
+
+    /// Files of the workspace for Quick Open.
+    pub fn file_index(&self) -> &FileIndex {
+        &self.inner.files
     }
 
     /// Opens a folder: adds it to the workspace, watches it and loads its settings. In the
@@ -319,6 +396,7 @@ impl CoreApi {
             "workspaceFolderCount",
             json!(self.inner.project.folders().len()),
         );
+        self.inner.reindex.notify_one();
         Ok(folder)
     }
 

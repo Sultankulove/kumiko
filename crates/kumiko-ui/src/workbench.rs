@@ -8,8 +8,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use gpui::{
-    AnyElement, ClickEvent, Context, FocusHandle, KeyDownEvent, MouseButton, ScrollStrategy,
-    SharedString, UniformListScrollHandle, Window, div, prelude::*, px, rgba, uniform_list,
+    AnyElement, ClickEvent, Context, FocusHandle, FontWeight, HighlightStyle, KeyDownEvent,
+    MouseButton, ScrollStrategy, SharedString, StyledText, UniformListScrollHandle, Window, div,
+    prelude::*, px, rgba, uniform_list,
 };
 use kumiko_core::CoreApi;
 use kumiko_core::config::keymap::{KeyChord, KeySequence, Resolution};
@@ -29,6 +30,7 @@ use crate::keys;
 use crate::layout::{LayoutState, Rect, Regions, Side, TAB_BAR_HEIGHT, ToolWindow};
 use crate::menus::{self, CommandLookup, Menu};
 use crate::palette::Palette;
+use crate::quick_open::{self, Action, Item, Mode, QuickOpen};
 use crate::tabs::Tabs;
 use crate::tree::{Entry, FileTree, Row};
 
@@ -44,6 +46,8 @@ const UI_TEXT: f32 = 13.0;
 const ROW_HEIGHT: f32 = 20.0;
 const EDITOR_TEXT: f32 = 14.0;
 const EDITOR_LINE: f32 = 19.0;
+/// Results shown at once in Quick Open.
+const QUICK_ROWS: usize = 14;
 
 /// Accessible node ids of the workbench regions; tree items and tabs get ranges of their own.
 mod node {
@@ -65,6 +69,7 @@ mod node {
 enum FocusTarget {
     Project,
     Editor,
+    Quick,
 }
 
 /// A file shown in a tab: its document and its lines, as text for display.
@@ -100,6 +105,11 @@ pub struct Workbench {
     /// The last message for the status bar (e.g. a failed command).
     message: Option<String>,
     a11y: Option<Bridge>,
+    /// The open Quick Open popup and its focus.
+    quick_open: Option<QuickOpen>,
+    quick_focus: FocusHandle,
+    /// Files opened, most recent first (shown first in Quick Open).
+    recent: Vec<Uri>,
     /// Process start, until the first frame is drawn (then logged, section 23 budgets).
     started: Option<Instant>,
     /// The window has been shown (frames before that are not seen).
@@ -151,6 +161,9 @@ impl Workbench {
             a11y: None,
             started: Some(started),
             shown: false,
+            quick_open: None,
+            quick_focus: cx.focus_handle(),
+            recent: Vec::new(),
         };
         workbench.menus = workbench.build_menus();
         workbench.watch_events(cx);
@@ -194,6 +207,7 @@ impl Workbench {
         match command {
             UiCommand::Toggle(window) => self.toggle_tool_window(window),
             UiCommand::OpenFile(uri) => self.open_file(uri, cx),
+            UiCommand::QuickOpen(mode) => self.open_quick(mode),
             UiCommand::CloseEditor => self.close_active_tab(),
             UiCommand::NextEditor => self.tabs.cycle(1),
             UiCommand::PreviousEditor => self.tabs.cycle(-1),
@@ -464,6 +478,7 @@ impl Workbench {
         let title = file_name(&uri);
         self.focus_request = Some(FocusTarget::Editor);
         if self.files.contains_key(&uri) {
+            self.remember(&uri);
             self.tabs.open(uri, title);
             return;
         }
@@ -477,6 +492,7 @@ impl Workbench {
             let _ = this.update(cx, |workbench, cx| {
                 match result {
                     Ok(Ok(snapshot)) => {
+                        workbench.remember(&uri);
                         workbench
                             .files
                             .insert(uri.clone(), OpenFile::new(&snapshot));
@@ -514,6 +530,285 @@ impl Workbench {
         if self.tabs.len() == 0 {
             self.focus_request = Some(FocusTarget::Project);
         }
+    }
+
+    // ---- quick open -----------------------------------------------------------------------
+
+    fn open_quick(&mut self, mode: Mode) {
+        self.open_menu = None;
+        self.quick_open = Some(QuickOpen::new(mode));
+        self.refresh_quick();
+        self.focus_request = Some(FocusTarget::Quick);
+    }
+
+    fn close_quick(&mut self) {
+        self.quick_open = None;
+        self.focus_request = Some(if self.tabs.len() > 0 {
+            FocusTarget::Editor
+        } else {
+            FocusTarget::Project
+        });
+    }
+
+    fn remember(&mut self, uri: &Uri) {
+        self.recent.retain(|u| u != uri);
+        self.recent.insert(0, uri.clone());
+        self.recent.truncate(50);
+    }
+
+    /// Recomputes the results for the current input.
+    fn refresh_quick(&mut self) {
+        let Some(quick) = &self.quick_open else {
+            return;
+        };
+        let (mode, query) = (quick.mode(), quick.query().to_owned());
+        let items = match mode {
+            Mode::Files => self.file_items(&query),
+            Mode::Commands => self.command_items(&query),
+            Mode::Line => self.line_items(&query),
+            Mode::Symbols => vec![self.note("quickOpen.symbolsUnavailable")],
+        };
+        let items = if items.is_empty() {
+            vec![self.note("quickOpen.noResults")]
+        } else {
+            items
+        };
+        if let Some(quick) = &mut self.quick_open {
+            quick.set_items(items);
+        }
+    }
+
+    fn note(&self, key: &str) -> Item {
+        Item {
+            label: self.t(key),
+            highlights: Vec::new(),
+            detail: String::new(),
+            keys: None,
+            action: Action::None,
+        }
+    }
+
+    /// Files from the core's index; with an empty query, recently opened files first.
+    fn file_items(&self, query: &str) -> Vec<Item> {
+        const LIMIT: usize = 50;
+        let item = |uri: Uri, relative: &str, highlights: Vec<u32>, detail: String| Item {
+            label: relative.rsplit('/').next().unwrap_or(relative).to_owned(),
+            highlights,
+            detail,
+            keys: None,
+            action: Action::OpenFile(uri),
+        };
+        let folder_of = |relative: &str| {
+            relative
+                .rsplit_once('/')
+                .map_or_else(String::new, |(dir, _)| dir.to_owned())
+        };
+        let index = self.core.file_index();
+        if query.is_empty() {
+            let recent_label = self.t("quickOpen.recent");
+            let mut items: Vec<Item> = self
+                .recent
+                .iter()
+                .map(|uri| {
+                    item(
+                        uri.clone(),
+                        &file_name(uri),
+                        Vec::new(),
+                        recent_label.clone(),
+                    )
+                })
+                .collect();
+            for found in index.find("", LIMIT) {
+                if !self.recent.contains(&found.file.uri) {
+                    let detail = folder_of(&found.file.relative);
+                    items.push(item(
+                        found.file.uri,
+                        &found.file.relative,
+                        Vec::new(),
+                        detail,
+                    ));
+                }
+            }
+            items.truncate(LIMIT);
+            return items;
+        }
+        index
+            .find(query, LIMIT)
+            .into_iter()
+            .map(|found| {
+                let name = found.file.name().to_owned();
+                let highlights =
+                    quick_open::name_highlights(&found.file.relative, &name, &found.indices);
+                let detail = folder_of(&found.file.relative);
+                item(found.file.uri, &found.file.relative, highlights, detail)
+            })
+            .collect()
+    }
+
+    /// Enabled commands, by their localized titles.
+    fn command_items(&self, query: &str) -> Vec<Item> {
+        let lookup = self.lookup();
+        let commands: Vec<(CommandId, String)> = self
+            .core
+            .commands()
+            .list()
+            .into_iter()
+            .filter(|c| self.core.commands().is_enabled(&c.id))
+            .filter_map(|c| Some((c.id.clone(), lookup.title(&c.id)?)))
+            .collect();
+        let ranked: Vec<(usize, Vec<u32>)> = if query.is_empty() {
+            let mut all: Vec<usize> = (0..commands.len()).collect();
+            all.sort_by(|&a, &b| commands[a].1.cmp(&commands[b].1));
+            all.into_iter().map(|i| (i, Vec::new())).collect()
+        } else {
+            kumiko_core::search::rank(
+                query,
+                commands.iter().map(|(_, title)| title.as_str()),
+                100,
+                false,
+            )
+            .into_iter()
+            .map(|(i, _, highlights)| (i, highlights))
+            .collect()
+        };
+        ranked
+            .into_iter()
+            .map(|(i, highlights)| {
+                let (id, title) = &commands[i];
+                Item {
+                    label: title.clone(),
+                    highlights,
+                    detail: id.to_string(),
+                    keys: lookup.keys(id),
+                    action: Action::Command(id.clone()),
+                }
+            })
+            .collect()
+    }
+
+    fn line_items(&self, query: &str) -> Vec<Item> {
+        let Some(file) = self.tabs.active().and_then(|t| self.files.get(&t.uri)) else {
+            return vec![self.note("quickOpen.noFile")];
+        };
+        match quick_open::parse_line(query) {
+            Some(line) => {
+                let line = line.min(file.lines.len().max(1));
+                vec![Item {
+                    label: self
+                        .t("quickOpen.gotoLine")
+                        .replace("{line}", &line.to_string()),
+                    highlights: Vec::new(),
+                    detail: String::new(),
+                    keys: None,
+                    action: Action::GotoLine(line),
+                }]
+            }
+            None => vec![self.note("quickOpen.lineHint")],
+        }
+    }
+
+    fn choose(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(action) = self
+            .quick_open
+            .as_ref()
+            .and_then(|q| q.items.get(index))
+            .map(|i| i.action.clone())
+        else {
+            return;
+        };
+        if action == Action::None {
+            return;
+        }
+        self.close_quick();
+        match action {
+            Action::OpenFile(uri) => {
+                self.execute_id("workbench.openFile", vec![Value::from(uri.as_str())], cx)
+            }
+            Action::Command(id) => self.execute(id, Vec::new(), cx),
+            Action::GotoLine(line) => self
+                .editor_scroll
+                .scroll_to_item(line.saturating_sub(1), ScrollStrategy::Center),
+            Action::None => {}
+        }
+        cx.notify();
+    }
+
+    fn quick_key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(quick) = &mut self.quick_open else {
+            return;
+        };
+        let stroke = &event.keystroke;
+        let modifiers = &stroke.modifiers;
+        let edited = match stroke.key.as_str() {
+            "escape" => {
+                self.close_quick();
+                cx.stop_propagation();
+                cx.notify();
+                return;
+            }
+            "enter" => {
+                let selected = quick.selected;
+                cx.stop_propagation();
+                self.choose(selected, cx);
+                return;
+            }
+            "down" => {
+                quick.move_selection(1);
+                false
+            }
+            "up" => {
+                quick.move_selection(-1);
+                false
+            }
+            "pagedown" => {
+                quick.move_selection(10);
+                false
+            }
+            "pageup" => {
+                quick.move_selection(-10);
+                false
+            }
+            "backspace" => {
+                quick.input.backspace();
+                true
+            }
+            "delete" => {
+                quick.input.delete();
+                true
+            }
+            "left" => {
+                quick.input.left();
+                false
+            }
+            "right" => {
+                quick.input.right();
+                false
+            }
+            "home" => {
+                quick.input.home();
+                false
+            }
+            "end" => {
+                quick.input.end();
+                false
+            }
+            _ => {
+                // Text is what the key types; shortcuts go on to the keymap.
+                let shortcut = modifiers.control || modifiers.platform || modifiers.alt;
+                match stroke.key_char.as_deref() {
+                    Some(text) if !shortcut => {
+                        quick.input.insert(text);
+                        true
+                    }
+                    _ => return,
+                }
+            }
+        };
+        cx.stop_propagation();
+        if edited {
+            self.refresh_quick();
+        }
+        cx.notify();
     }
 
     // ---- menus ----------------------------------------------------------------------------
@@ -780,6 +1075,7 @@ impl Render for Workbench {
                 FocusTarget::Project if self.layout.left.is_some() => {
                     self.project_focus.focus(window)
                 }
+                FocusTarget::Quick if self.quick_open.is_some() => self.quick_focus.focus(window),
                 _ => self.editor_focus.focus(window),
             }
         }
@@ -835,6 +1131,9 @@ impl Render for Workbench {
         }
         if let Some(index) = self.open_menu {
             root = root.child(self.menu_popup(index, &regions, cx));
+        }
+        if let Some(popup) = self.quick_popup(&regions, cx) {
+            root = root.child(popup);
         }
         root
     }
@@ -991,6 +1290,116 @@ impl Workbench {
             )
             .child(list.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()))
             .into_any_element()
+    }
+
+    /// The Quick Open popup: an input and up to [`QUICK_ROWS`] results around the selection.
+    fn quick_popup(&self, regions: &Regions, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let quick = self.quick_open.as_ref()?;
+        let p = &self.palette;
+        let width = (regions.menu_bar.w * 0.5).clamp(420.0, 720.0);
+        let x = ((regions.menu_bar.w - width) / 2.0).max(0.0);
+        let (before, after) = quick.input.split();
+        let caret = div().w(px(1.0)).h(px(16.0)).bg(rgba(p.foreground));
+        let input = div()
+            .h(px(32.0))
+            .px_3()
+            .flex()
+            .items_center()
+            .bg(rgba(p.input))
+            .border_b_1()
+            .border_color(rgba(p.border))
+            .whitespace_nowrap()
+            .child(before.to_owned())
+            .child(caret)
+            .child(after.to_owned())
+            .when(quick.input.text().is_empty(), |d| {
+                d.child(
+                    div()
+                        .pl_2()
+                        .text_color(rgba(p.muted))
+                        .child(self.t("quickOpen.placeholder")),
+                )
+            });
+        let first = quick.selected.saturating_sub(QUICK_ROWS - 1);
+        let rows = quick
+            .items
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(QUICK_ROWS)
+            .map(|(i, item)| {
+                let selected = i == quick.selected;
+                // Matches stand out in the accent colour, on the selection in the text colour.
+                let emphasis = HighlightStyle {
+                    color: Some(rgba(if selected { p.foreground } else { p.accent }).into()),
+                    font_weight: Some(FontWeight::BOLD),
+                    ..HighlightStyle::default()
+                };
+                let label = StyledText::new(item.label.clone()).with_highlights(char_ranges(
+                    &item.label,
+                    &item.highlights,
+                    emphasis,
+                ));
+                div()
+                    .id(("quick-item", i))
+                    .h(px(24.0))
+                    .px_3()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .whitespace_nowrap()
+                    .overflow_hidden()
+                    .when(selected, |d| d.bg(rgba(p.selection)))
+                    .when(item.action == Action::None, |d| d.text_color(rgba(p.muted)))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.choose(i, cx);
+                    }))
+                    .child(label)
+                    .child(
+                        div()
+                            .flex_1()
+                            .overflow_hidden()
+                            .text_color(rgba(p.muted))
+                            .text_size(px(12.0))
+                            .child(item.detail.clone()),
+                    )
+                    .when_some(item.keys.clone(), |d, keys| {
+                        d.child(div().text_color(rgba(p.muted)).child(keys))
+                    })
+            });
+        let popup = div()
+            .id("quick-open")
+            .track_focus(&self.quick_focus)
+            .on_key_down(cx.listener(Self::quick_key))
+            .absolute()
+            .left(px(x))
+            .top(px(regions.toolbar.y + regions.toolbar.h + 40.0))
+            .w(px(width))
+            .bg(rgba(p.popup))
+            .border_1()
+            .border_color(rgba(p.focus_border))
+            .shadow_lg()
+            .flex()
+            .flex_col()
+            .child(input)
+            .child(div().py_1().flex().flex_col().children(rows))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+        // A click outside closes the popup.
+        Some(
+            div()
+                .id("quick-overlay")
+                .absolute()
+                .size_full()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _window, cx| {
+                        this.close_quick();
+                        cx.notify();
+                    }),
+                )
+                .child(popup)
+                .into_any_element(),
+        )
     }
 
     /// A stripe with the buttons of the tool windows on its edge.
@@ -1296,4 +1705,24 @@ impl Workbench {
             }))
             .into_any_element()
     }
+}
+
+/// Byte ranges of the given character positions, merged where adjacent, with one style.
+fn char_ranges(
+    text: &str,
+    chars: &[u32],
+    style: HighlightStyle,
+) -> Vec<(std::ops::Range<usize>, HighlightStyle)> {
+    let mut ranges: Vec<(std::ops::Range<usize>, HighlightStyle)> = Vec::new();
+    for (index, (start, c)) in text.char_indices().enumerate() {
+        if !chars.contains(&(index as u32)) {
+            continue;
+        }
+        let end = start + c.len_utf8();
+        match ranges.last_mut() {
+            Some((range, _)) if range.end == start => range.end = end,
+            _ => ranges.push((start..end, style)),
+        }
+    }
+    ranges
 }

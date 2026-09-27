@@ -55,6 +55,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 thiserror = "2.0.20"
 globset = "0.4.20"
+# Search (spec, section 11): .gitignore-aware walking, fuzzy matching for Quick Open.
+ignore = "0.4"
+nucleo-matcher = "0.3"
 notify = "8.2.0"
 regex = "1.13.1"
 # Only `\n` breaks lines (buffers are normalized); U+2028 and friends must not, as in LSP.

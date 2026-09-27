@@ -8,4 +8,5 @@ mod e3_documents;
 mod e4_plugins;
 mod e4_process;
 mod e5_wasm;
+mod e7_quick_open;
 mod fixtures;

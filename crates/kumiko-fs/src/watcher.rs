@@ -369,6 +369,7 @@ mod tests {
         let watcher = start(&sink, &["**/out/**"]);
         watcher.watch(&root).unwrap();
 
+        let writing = Instant::now();
         for i in 0..2000 {
             std::fs::write(root.join("out").join(format!("f{i}.o")), "x").unwrap();
         }
@@ -395,7 +396,17 @@ mod tests {
             .filter(|c| c.uri.as_str().contains("/out/"))
             .count();
         assert_eq!(excluded, 0, "excluded paths leaked");
-        assert!(batches <= 20, "2200 writes produced {batches} batches");
+        // While events keep coming, a batch is flushed every window: slow disks (Windows CI with
+        // an antivirus) take longer to write and get more batches, but never one per write.
+        let windows = writing.elapsed().as_millis() / WatcherConfig::default().window.as_millis();
+        let bound = usize::try_from(windows)
+            .unwrap_or(usize::MAX)
+            .saturating_add(3)
+            .max(20);
+        assert!(
+            batches <= bound && batches < 200,
+            "2200 writes produced {batches} batches (bound {bound})"
+        );
         drop(watcher);
     }
 }

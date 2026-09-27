@@ -6,6 +6,8 @@
 use gpui::{
     App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size,
 };
+use std::time::Instant;
+
 use kumiko_core::CoreApi;
 use tokio::runtime::Handle;
 
@@ -15,13 +17,16 @@ mod keys;
 pub mod layout;
 mod menus;
 mod palette;
+mod tabs;
+mod tree;
 mod workbench;
 
 use workbench::Workbench;
 
 /// Opens the workbench and runs the UI event loop on the current (main) thread until the
-/// user quits. Core work is spawned on `runtime`.
-pub fn run(core: CoreApi, runtime: Handle) {
+/// user quits. Core work is spawned on `runtime`; `started` is when the process started, for
+/// the start-up time logged with the first frame.
+pub fn run(core: CoreApi, runtime: Handle, started: Instant) {
     let (requests, received) = tokio::sync::mpsc::unbounded_channel();
     // The registered handlers hold the senders; the channel lives as long as the core.
     commands::register(&core, &requests);
@@ -33,6 +38,8 @@ pub fn run(core: CoreApi, runtime: Handle) {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             // AccessKit's Windows adapter must subclass the window before it is shown.
             show: false,
+            // WM_CLASS on X11, app id on Wayland: lets the desktop match the `.desktop` file.
+            app_id: Some("kumiko".to_owned()),
             titlebar: Some(TitlebarOptions {
                 title: Some(title.into()),
                 ..TitlebarOptions::default()
@@ -40,7 +47,7 @@ pub fn run(core: CoreApi, runtime: Handle) {
             ..WindowOptions::default()
         };
         let opened = cx.open_window(options, |_, cx| {
-            cx.new(|cx| Workbench::new(core, runtime, received, cx))
+            cx.new(|cx| Workbench::new(core, runtime, received, started, cx))
         });
         let window = match opened {
             Ok(window) => window,

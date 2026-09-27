@@ -47,3 +47,16 @@ command = "workbench.toggleProblems"
 [[binding]]
 key = "ctrl+q"
 command = "workbench.quit"
+
+# Editor tabs, as in JetBrains IDEs.
+[[binding]]
+key = "ctrl+f4"
+command = "workbench.closeEditor"
+
+[[binding]]
+key = "alt+right"
+command = "workbench.nextEditor"
+
+[[binding]]
+key = "alt+left"
+command = "workbench.previousEditor"

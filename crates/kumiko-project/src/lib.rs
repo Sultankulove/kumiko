@@ -146,6 +146,26 @@ impl ProjectService {
             .map(|f| f.folder.clone())
     }
 
+    /// Whether `files.exclude` hides the path (relative to its folder); paths outside the
+    /// workspace are not excluded.
+    pub fn is_excluded(&self, path: &Path) -> bool {
+        let folders = read(&self.folders);
+        let Some(folder) = folders
+            .iter()
+            .filter(|f| path.starts_with(&f.path))
+            .max_by_key(|f| f.path.as_os_str().len())
+        else {
+            return false;
+        };
+        let relative = path.strip_prefix(&folder.path).unwrap_or(path);
+        let exclude = read(&self.exclude);
+        // An excluded directory hides everything below it.
+        relative
+            .ancestors()
+            .filter(|p| !p.as_os_str().is_empty())
+            .any(|p| excluded(&exclude, p))
+    }
+
     pub fn set_exclude(&self, globs: &[String]) -> Result<(), ProjectError> {
         *write(&self.exclude) = Arc::new(glob_set(globs)?);
         Ok(())
@@ -300,6 +320,11 @@ mod tests {
         );
 
         project.set_exclude(&["**/vendor".into()]).unwrap();
+        let root = kumiko_types::paths::canonicalize(dir.path()).unwrap();
+        assert!(project.is_excluded(&root.join("vendor")));
+        assert!(project.is_excluded(&root.join("vendor").join("lib")));
+        assert!(!project.is_excluded(&root.join("app")));
+        assert!(!project.is_excluded(&root));
         let found = project.find_files("**/build.manifest", 10).await.unwrap();
         assert_eq!(found.len(), 1);
         assert!(found[0].as_str().ends_with("/app/build.manifest"));

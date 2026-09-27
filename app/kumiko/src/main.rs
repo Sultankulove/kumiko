@@ -10,6 +10,7 @@ use kumiko_core::{CoreApi, CoreOptions};
 use kumiko_types::KumikoDirs;
 
 fn main() -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
     let mut folder = None;
     for arg in std::env::args_os().skip(1) {
         match arg.to_str() {
@@ -43,17 +44,20 @@ fn main() -> anyhow::Result<()> {
     if options.builtin_resources.is_none() {
         tracing::warn!("built-in resources not found; set KUMIKO_RESOURCES");
     }
-    let core = runtime.block_on(async {
-        let core = CoreApi::start(options).await?;
-        if let Some(folder) = &folder {
-            core.open_folder(folder)
-                .await
-                .with_context(|| format!("cannot open {}", folder.display()))?;
-        }
-        anyhow::Ok(core)
-    })?;
+    let core = runtime.block_on(CoreApi::start(options))?;
+    // The window does not wait for the folder: watching a large tree takes seconds on slow
+    // file systems (docs/research/ui-linux-native.md). The project tree appears when the
+    // folder is added.
+    if let Some(folder) = folder {
+        let core = core.clone();
+        runtime.spawn(async move {
+            if let Err(error) = core.open_folder(&folder).await {
+                tracing::error!("cannot open {}: {error}", folder.display());
+            }
+        });
+    }
 
-    kumiko_ui::run(core.clone(), runtime.handle().clone());
+    kumiko_ui::run(core.clone(), runtime.handle().clone(), started);
     runtime.block_on(core.shutdown());
     Ok(())
 }

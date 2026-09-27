@@ -11,6 +11,9 @@ publish = false
 [lints]
 workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [dependencies]
 kumiko-core.workspace = true
 kumiko-types.workspace = true

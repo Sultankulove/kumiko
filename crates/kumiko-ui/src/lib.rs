@@ -20,6 +20,7 @@ mod menus;
 mod palette;
 mod problems;
 mod quick_open;
+mod state;
 mod tabs;
 mod tree;
 mod workbench;
@@ -67,6 +68,13 @@ pub fn run(core: CoreApi, runtime: Handle, started: Instant) {
         if let Err(error) = shown {
             tracing::error!("cannot show the window: {error:#}");
         }
+        // Closing the window ends the IDE.
+        cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
         cx.activate(true);
     });
 }

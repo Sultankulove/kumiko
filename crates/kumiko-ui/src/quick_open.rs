@@ -13,6 +13,8 @@ pub enum Mode {
     Commands,
     Line,
     Symbols,
+    /// A fixed list to pick from (no prefix): colour themes.
+    Themes,
 }
 
 impl Mode {
@@ -23,6 +25,7 @@ impl Mode {
             Mode::Commands => ">",
             Mode::Line => ":",
             Mode::Symbols => "@",
+            Mode::Themes => "",
         }
     }
 }
@@ -33,6 +36,8 @@ pub enum Action {
     OpenFile(Uri),
     Command(CommandId),
     GotoLine(usize),
+    /// Make the theme with this id the current one.
+    SetTheme(String),
     /// Informational row (e.g. "no results").
     None,
 }
@@ -53,6 +58,8 @@ pub struct QuickOpen {
     pub input: LineInput,
     pub items: Vec<Item>,
     pub selected: usize,
+    /// A picker keeps its mode whatever is typed.
+    fixed: Option<Mode>,
 }
 
 impl QuickOpen {
@@ -64,7 +71,18 @@ impl QuickOpen {
         }
     }
 
+    /// Opens a picker: the input filters a fixed list.
+    pub fn picker(mode: Mode) -> Self {
+        Self {
+            fixed: Some(mode),
+            ..Self::default()
+        }
+    }
+
     pub fn mode(&self) -> Mode {
+        if let Some(mode) = self.fixed {
+            return mode;
+        }
         match self.input.text().chars().next() {
             Some('>') => Mode::Commands,
             Some(':') => Mode::Line,
@@ -125,6 +143,9 @@ mod tests {
         assert_eq!(quick.input.text(), ":");
         assert_eq!(quick.mode(), Mode::Line);
         assert_eq!(QuickOpen::new(Mode::Symbols).mode(), Mode::Symbols);
+        let mut picker = QuickOpen::picker(Mode::Themes);
+        picker.input.insert(">dar");
+        assert_eq!((picker.mode(), picker.query()), (Mode::Themes, ">dar"));
     }
 
     #[test]

@@ -37,7 +37,7 @@ const MAIN_MENUS: &[(&str, &str, &[Option<&str>])] = &[
         "navigate",
         &[Some("workbench.quickOpen"), Some("workbench.showCommands")],
     ),
-    ("menu.tools", "tools", &[]),
+    ("menu.tools", "tools", &[Some("workbench.selectTheme")]),
     ("menu.help", "help", &[]),
 ];
 

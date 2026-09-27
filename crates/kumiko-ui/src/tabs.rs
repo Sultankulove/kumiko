@@ -85,6 +85,9 @@ impl Tabs {
     }
 }
 
+/// A group as its files and the index of its active tab.
+pub type GroupFiles = (Vec<Uri>, Option<usize>);
+
 /// How two editor groups share the editor area.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -184,6 +187,64 @@ impl Split {
             self.active = 0;
         }
         tab
+    }
+
+    /// The groups, the active group and the orientation.
+    pub fn to_state(&self) -> (Vec<GroupFiles>, usize, Orientation) {
+        let groups = self
+            .groups
+            .iter()
+            .map(|g| (g.iter().map(|t| t.uri.clone()).collect(), g.active_index()))
+            .collect();
+        (groups, self.active, self.orientation)
+    }
+
+    /// Rebuilds the groups (at most two; empty ones are dropped).
+    pub fn restore(
+        groups: Vec<(Vec<Tab>, Option<usize>)>,
+        active: usize,
+        orientation: Orientation,
+    ) -> Self {
+        let mut restored: Vec<Tabs> = groups
+            .into_iter()
+            .filter(|(tabs, _)| !tabs.is_empty())
+            .take(2)
+            .map(|(tabs, active)| {
+                let mut group = Tabs::default();
+                for tab in tabs {
+                    group.open(tab.uri, tab.title);
+                }
+                if let Some(index) = active {
+                    group.activate(index);
+                }
+                group
+            })
+            .collect();
+        if restored.is_empty() {
+            restored.push(Tabs::default());
+        }
+        let active = active.min(restored.len() - 1);
+        Self {
+            groups: restored,
+            active,
+            orientation,
+        }
+    }
+
+    /// Closes the file's tabs everywhere (it could not be opened); empty groups go away.
+    pub fn remove_file(&mut self, uri: &Uri) {
+        for group in &mut self.groups {
+            if let Some(index) = group.position(uri) {
+                group.close(index);
+            }
+        }
+        if self.groups.len() > 1 {
+            self.groups.retain(|g| g.len() > 0);
+            if self.groups.is_empty() {
+                self.groups.push(Tabs::default());
+            }
+            self.active = self.active.min(self.groups.len() - 1);
+        }
     }
 
     /// Whether any group shows the file.
@@ -323,5 +384,35 @@ mod tests {
                 Rect::new(0.0, 26.0, 101.0, 25.0)
             ]
         );
+    }
+
+    #[test]
+    fn split_state_round_trips_and_missing_files_go() {
+        let tab = |n: &str| Tab {
+            uri: uri(n),
+            title: n.into(),
+        };
+        let mut split = Split::restore(
+            vec![
+                (vec![tab("a"), tab("b")], Some(0)),
+                (vec![], None),
+                (vec![tab("c")], Some(0)),
+            ],
+            1,
+            Orientation::Down,
+        );
+        assert_eq!(split.groups().len(), 2, "empty groups are dropped");
+        assert_eq!(titles(&split.groups()[0]), ["a", "b"]);
+        assert_eq!(split.groups()[0].active().unwrap().title, "a");
+        let (groups, active, orientation) = split.to_state();
+        assert_eq!(groups[1], (vec![uri("c")], Some(0)));
+        assert_eq!((active, orientation), (1, Orientation::Down));
+
+        split.remove_file(&uri("c"));
+        assert_eq!(split.groups().len(), 1);
+        assert_eq!(split.active_group(), 0);
+        assert!(!split.holds(&uri("c")));
+        let empty = Split::restore(Vec::new(), 3, Orientation::Right);
+        assert_eq!((empty.groups().len(), empty.active_group()), (1, 0));
     }
 }

@@ -22,6 +22,9 @@ pub enum UiCommand {
     /// Quick Open in a mode: files, commands, a line.
     QuickOpen(Mode),
     CloseEditor,
+    /// Pick a colour theme; set one (`workbench.setTheme [id]`).
+    SelectTheme,
+    SetTheme(String),
     /// Split the editor area, or join it back.
     Split(Orientation),
     Unsplit,
@@ -66,8 +69,20 @@ const COMMANDS: &[(&str, Parse)] = &[
     ("workbench.previousEditor", |_| {
         Ok(UiCommand::PreviousEditor)
     }),
+    ("workbench.selectTheme", |_| Ok(UiCommand::SelectTheme)),
+    ("workbench.setTheme", set_theme),
     ("workbench.quit", |_| Ok(UiCommand::Quit)),
 ];
+
+/// Commands that need arguments: the command palette does not offer them.
+pub const NEEDS_ARGUMENTS: &[&str] = &["workbench.openFile", "workbench.setTheme"];
+
+fn set_theme(args: &[Value]) -> Result<UiCommand, String> {
+    args.first()
+        .and_then(Value::as_str)
+        .map(|id| UiCommand::SetTheme(id.to_owned()))
+        .ok_or_else(|| "expected a theme id".to_owned())
+}
 
 fn open_file(args: &[Value]) -> Result<UiCommand, String> {
     let uri = args

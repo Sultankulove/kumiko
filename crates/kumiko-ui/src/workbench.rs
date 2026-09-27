@@ -20,6 +20,7 @@ use kumiko_core::plugin_host::PluginStatus;
 use kumiko_core::protocol::events::FsChanged;
 use kumiko_core::protocol::events::PluginState;
 use kumiko_core::protocol::methods::fs::FileKind;
+use kumiko_core::resources::ResourceKind;
 use kumiko_core::service_api::FileSystem;
 use kumiko_types::{CommandId, DocumentId, Uri};
 use serde_json::Value;
@@ -27,14 +28,15 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::a11y::{AccessNode, AccessTree, Bridge};
-use crate::commands::UiCommand;
+use crate::commands::{NEEDS_ARGUMENTS, UiCommand};
 use crate::keys;
 use crate::layout::{LayoutState, Rect, Regions, Side, TAB_BAR_HEIGHT, ToolWindow};
 use crate::menus::{self, CommandLookup, Menu};
 use crate::palette::Palette;
 use crate::problems::{self, Group, Problem, Severity};
 use crate::quick_open::{self, Action, Item, Mode, QuickOpen};
-use crate::tabs::{Split, Tabs};
+use crate::state::{self, GroupState, WorkspaceState};
+use crate::tabs::{Split, Tab, Tabs};
 use crate::tree::{Entry, FileTree, Row};
 
 #[cfg(windows)]
@@ -112,6 +114,8 @@ pub struct Workbench {
     /// The open Quick Open popup and its focus.
     quick_open: Option<QuickOpen>,
     quick_focus: FocusHandle,
+    /// Where the workspace state is saved, once a folder is open.
+    state_file: Option<std::path::PathBuf>,
     /// Files opened, most recent first (shown first in Quick Open).
     recent: Vec<Uri>,
     /// Problems grouped by source (Problems tool window).
@@ -176,12 +180,18 @@ impl Workbench {
             shown: false,
             quick_open: None,
             quick_focus: cx.focus_handle(),
+            state_file: None,
             recent: Vec::new(),
             problems: Vec::new(),
             output_channel: None,
             output_lines: Arc::new(Vec::new()),
             output_scroll: UniformListScrollHandle::new(),
         };
+        cx.on_app_quit(|workbench, _cx| {
+            workbench.save_state();
+            async {}
+        })
+        .detach();
         workbench.menus = workbench.build_menus();
         workbench.watch_events(cx);
         workbench.watch_output(cx);
@@ -228,6 +238,13 @@ impl Workbench {
             UiCommand::Toggle(window) => self.toggle_tool_window(window),
             UiCommand::OpenFile(uri) => self.open_file(uri, cx),
             UiCommand::QuickOpen(mode) => self.open_quick(mode),
+            UiCommand::SelectTheme => {
+                self.open_menu = None;
+                self.quick_open = Some(QuickOpen::picker(Mode::Themes));
+                self.refresh_quick();
+                self.focus_request = Some(FocusTarget::Quick);
+            }
+            UiCommand::SetTheme(id) => self.set_theme(&id),
             UiCommand::CloseEditor => self.close_active_tab(),
             UiCommand::Split(orientation) => self.split.split(orientation),
             UiCommand::Unsplit => self.split.unsplit(),
@@ -236,6 +253,7 @@ impl Workbench {
             UiCommand::Quit => cx.quit(),
         }
         self.publish_context();
+        self.save_state();
         cx.notify();
     }
 
@@ -369,6 +387,9 @@ impl Workbench {
             }
         };
         if event.topic.starts_with("config.") || event.topic.starts_with("plugin.") {
+            if event.topic.starts_with("config.") {
+                self.reload_settings();
+            }
             self.refresh_problems();
             cx.notify();
         } else if let Some(Ok(changed)) = event.decode::<FsChanged>() {
@@ -405,6 +426,9 @@ impl Workbench {
             .collect();
         for dir in self.tree.set_roots(roots) {
             self.load_dir(dir, cx);
+        }
+        if self.state_file.is_none() && !self.core.project().folders().is_empty() {
+            self.restore_state(cx);
         }
         cx.notify();
     }
@@ -462,6 +486,8 @@ impl Workbench {
                 }
             }
             "left" => self.tree.left(),
+            // As in JetBrains IDEs: Escape leaves a tool window for the editor.
+            "escape" => self.focus_request = Some(FocusTarget::Editor),
             "enter" => self.activate_selected(cx),
             _ => return,
         }
@@ -525,6 +551,7 @@ impl Workbench {
                             .files
                             .insert(uri.clone(), OpenFile::new(&snapshot));
                         workbench.split.tabs_mut().open(uri, title);
+                        workbench.save_state();
                         workbench.editor_scrolls[workbench.split.active_group()]
                             .scroll_to_item(0, ScrollStrategy::Top);
                         workbench.publish_context();
@@ -593,6 +620,7 @@ impl Workbench {
             Mode::Commands => self.command_items(&query),
             Mode::Line => self.line_items(&query),
             Mode::Symbols => vec![self.note("quickOpen.symbolsUnavailable")],
+            Mode::Themes => self.theme_items(&query),
         };
         let items = if items.is_empty() {
             vec![self.note("quickOpen.noResults")]
@@ -680,6 +708,7 @@ impl Workbench {
             .list()
             .into_iter()
             .filter(|c| self.core.commands().is_enabled(&c.id))
+            .filter(|c| !NEEDS_ARGUMENTS.contains(&c.id.as_str()))
             .filter_map(|c| Some((c.id.clone(), lookup.title(&c.id)?)))
             .collect();
         let ranked: Vec<(usize, Vec<u32>)> = if query.is_empty() {
@@ -738,6 +767,69 @@ impl Workbench {
         }
     }
 
+    /// Installed colour themes by name; the current one says so.
+    fn theme_items(&self, query: &str) -> Vec<Item> {
+        let current = self
+            .core
+            .config()
+            .get("workbench.theme", None)
+            .and_then(|v| v.as_str().map(str::to_owned));
+        let themes: Vec<(String, String)> = self
+            .core
+            .resources()
+            .list(ResourceKind::Theme)
+            .into_iter()
+            .map(|package| {
+                let name = package.name.as_deref().unwrap_or(&package.id).to_owned();
+                (package.id, self.core.resources().label(&name, &self.locale))
+            })
+            .collect();
+        let ranked: Vec<(usize, Vec<u32>)> = if query.is_empty() {
+            (0..themes.len()).map(|i| (i, Vec::new())).collect()
+        } else {
+            kumiko_core::search::rank(query, themes.iter().map(|(_, n)| n.as_str()), 50, false)
+                .into_iter()
+                .map(|(i, _, highlights)| (i, highlights))
+                .collect()
+        };
+        ranked
+            .into_iter()
+            .map(|(i, highlights)| {
+                let (id, name) = &themes[i];
+                Item {
+                    label: name.clone(),
+                    highlights,
+                    detail: if current.as_deref() == Some(id.as_str()) {
+                        self.t("quickOpen.currentTheme")
+                    } else {
+                        String::new()
+                    },
+                    keys: None,
+                    action: Action::SetTheme(id.clone()),
+                }
+            })
+            .collect()
+    }
+
+    /// Writes the theme to the user settings; the change comes back as `config.changed`.
+    fn set_theme(&mut self, id: &str) {
+        let written = self.core.config().update(
+            "workbench.theme",
+            Value::from(id),
+            kumiko_core::protocol::methods::config::ConfigTarget::User,
+        );
+        if let Err(error) = written {
+            self.message = Some(error.to_string());
+        }
+    }
+
+    /// Settings the workbench shows changed: colours, language, menus.
+    fn reload_settings(&mut self) {
+        self.palette = palette(&self.core);
+        self.locale = self.core.locale();
+        self.menus = self.build_menus();
+    }
+
     fn choose(&mut self, index: usize, cx: &mut Context<Self>) {
         let Some(action) = self
             .quick_open
@@ -756,6 +848,9 @@ impl Workbench {
                 self.execute_id("workbench.openFile", vec![Value::from(uri.as_str())], cx)
             }
             Action::Command(id) => self.execute(id, Vec::new(), cx),
+            Action::SetTheme(id) => {
+                self.execute_id("workbench.setTheme", vec![Value::from(id)], cx)
+            }
             Action::GotoLine(line) => self.editor_scrolls[self.split.active_group()]
                 .scroll_to_item(line.saturating_sub(1), ScrollStrategy::Center),
             Action::None => {}
@@ -971,6 +1066,99 @@ impl Workbench {
             channel.to_owned()
         } else {
             title
+        }
+    }
+
+    // ---- workspace state --------------------------------------------------------------------
+
+    /// Restores the workspace's saved layout and tabs once its first folder is known.
+    fn restore_state(&mut self, cx: &mut Context<Self>) {
+        let Some(folder) = self.core.project().folders().into_iter().next() else {
+            return;
+        };
+        let path = state::path(&self.core.dirs().workspaces_state_dir(), &folder.uri);
+        let saved = state::load(&path);
+        self.state_file = Some(path);
+        self.layout = saved.layout;
+        self.recent = saved.recent;
+        let groups = saved
+            .groups
+            .into_iter()
+            .map(|g| {
+                let tabs = g
+                    .files
+                    .into_iter()
+                    .map(|uri| Tab {
+                        title: file_name(&uri),
+                        uri,
+                    })
+                    .collect();
+                (tabs, g.active)
+            })
+            .collect();
+        self.split = Split::restore(groups, saved.active_group, saved.orientation);
+        let files: Vec<Uri> = self
+            .split
+            .groups()
+            .iter()
+            .flat_map(|g| g.iter().map(|t| t.uri.clone()))
+            .collect();
+        for uri in files {
+            self.load_document(uri, cx);
+        }
+        self.publish_context();
+        cx.notify();
+    }
+
+    /// Opens a restored tab's document; a file that is gone loses its tabs.
+    fn load_document(&self, uri: Uri, cx: &mut Context<Self>) {
+        if self.files.contains_key(&uri) {
+            return;
+        }
+        let core = self.core.clone();
+        let opened = uri.clone();
+        let task = self
+            .runtime
+            .spawn(async move { core.documents().open(&opened, None).await });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |workbench, cx| {
+                match result {
+                    Ok(Ok(snapshot)) => {
+                        workbench.files.insert(uri, OpenFile::new(&snapshot));
+                    }
+                    _ => {
+                        workbench.split.remove_file(&uri);
+                        workbench.save_state();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Writes the workspace state (after changes and on quit); failures are only logged.
+    fn save_state(&self) {
+        let Some(path) = &self.state_file else {
+            return;
+        };
+        let (groups, active_group, orientation) = self.split.to_state();
+        let saved = WorkspaceState {
+            layout: self.layout.clone(),
+            groups: groups
+                .into_iter()
+                .map(|(files, active)| GroupState { files, active })
+                .collect(),
+            active_group,
+            orientation,
+            recent: self.recent.clone(),
+        };
+        if let Err(error) = state::save(path, &saved) {
+            tracing::warn!(
+                "cannot save the workspace state to {}: {error}",
+                path.display()
+            );
         }
     }
 
@@ -1947,6 +2135,7 @@ impl Workbench {
                     this.split.tabs_mut().activate(i);
                     this.focus_request = Some(FocusTarget::Editor);
                     this.publish_context();
+                    this.save_state();
                     cx.notify();
                 }))
                 .child(tab.title.clone())
@@ -1990,6 +2179,7 @@ impl Workbench {
                     if this.split.active_group() != g {
                         this.split.focus_group(g);
                         this.publish_context();
+                        this.save_state();
                         cx.notify();
                     }
                 }),

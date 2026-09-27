@@ -12,6 +12,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::layout::ToolWindow;
 use crate::quick_open::Mode;
+use crate::tabs::Orientation;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UiCommand {
@@ -21,6 +22,9 @@ pub enum UiCommand {
     /// Quick Open in a mode: files, commands, a line.
     QuickOpen(Mode),
     CloseEditor,
+    /// Split the editor area, or join it back.
+    Split(Orientation),
+    Unsplit,
     NextEditor,
     PreviousEditor,
     Quit,
@@ -51,6 +55,13 @@ const COMMANDS: &[(&str, Parse)] = &[
         Ok(UiCommand::QuickOpen(Mode::Line))
     }),
     ("workbench.closeEditor", |_| Ok(UiCommand::CloseEditor)),
+    ("workbench.splitRight", |_| {
+        Ok(UiCommand::Split(Orientation::Right))
+    }),
+    ("workbench.splitDown", |_| {
+        Ok(UiCommand::Split(Orientation::Down))
+    }),
+    ("workbench.unsplit", |_| Ok(UiCommand::Unsplit)),
     ("workbench.nextEditor", |_| Ok(UiCommand::NextEditor)),
     ("workbench.previousEditor", |_| {
         Ok(UiCommand::PreviousEditor)

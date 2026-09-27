@@ -34,7 +34,7 @@ use crate::menus::{self, CommandLookup, Menu};
 use crate::palette::Palette;
 use crate::problems::{self, Group, Problem, Severity};
 use crate::quick_open::{self, Action, Item, Mode, QuickOpen};
-use crate::tabs::Tabs;
+use crate::tabs::{Split, Tabs};
 use crate::tree::{Entry, FileTree, Row};
 
 #[cfg(windows)]
@@ -102,9 +102,10 @@ pub struct Workbench {
     tree: FileTree,
     rows: Vec<Row>,
     tree_scroll: UniformListScrollHandle,
-    tabs: Tabs,
+    split: Split,
     files: HashMap<Uri, OpenFile>,
-    editor_scroll: UniformListScrollHandle,
+    /// Scroll positions of the editor groups (at most two).
+    editor_scrolls: [UniformListScrollHandle; 2],
     /// The last message for the status bar (e.g. a failed command).
     message: Option<String>,
     a11y: Option<Bridge>,
@@ -163,9 +164,12 @@ impl Workbench {
             tree: FileTree::default(),
             rows: Vec::new(),
             tree_scroll: UniformListScrollHandle::new(),
-            tabs: Tabs::default(),
+            split: Split::default(),
             files: HashMap::new(),
-            editor_scroll: UniformListScrollHandle::new(),
+            editor_scrolls: [
+                UniformListScrollHandle::new(),
+                UniformListScrollHandle::new(),
+            ],
             message: None,
             a11y: None,
             started: Some(started),
@@ -225,8 +229,10 @@ impl Workbench {
             UiCommand::OpenFile(uri) => self.open_file(uri, cx),
             UiCommand::QuickOpen(mode) => self.open_quick(mode),
             UiCommand::CloseEditor => self.close_active_tab(),
-            UiCommand::NextEditor => self.tabs.cycle(1),
-            UiCommand::PreviousEditor => self.tabs.cycle(-1),
+            UiCommand::Split(orientation) => self.split.split(orientation),
+            UiCommand::Unsplit => self.split.unsplit(),
+            UiCommand::NextEditor => self.split.tabs_mut().cycle(1),
+            UiCommand::PreviousEditor => self.split.tabs_mut().cycle(-1),
             UiCommand::Quit => cx.quit(),
         }
         self.publish_context();
@@ -261,7 +267,7 @@ impl Workbench {
                 Value::Bool(self.layout.is_open(window)),
             );
         }
-        context.set("activeEditorCount", Value::from(self.tabs.len()));
+        context.set("activeEditorCount", Value::from(self.split.tabs().len()));
     }
 
     /// Runs a command on the core's runtime; a failure shows in the status bar.
@@ -501,7 +507,7 @@ impl Workbench {
         self.focus_request = Some(FocusTarget::Editor);
         if self.files.contains_key(&uri) {
             self.remember(&uri);
-            self.tabs.open(uri, title);
+            self.split.tabs_mut().open(uri, title);
             return;
         }
         let core = self.core.clone();
@@ -518,9 +524,8 @@ impl Workbench {
                         workbench
                             .files
                             .insert(uri.clone(), OpenFile::new(&snapshot));
-                        workbench.tabs.open(uri, title);
-                        workbench
-                            .editor_scroll
+                        workbench.split.tabs_mut().open(uri, title);
+                        workbench.editor_scrolls[workbench.split.active_group()]
                             .scroll_to_item(0, ScrollStrategy::Top);
                         workbench.publish_context();
                     }
@@ -539,17 +544,16 @@ impl Workbench {
         .detach();
     }
 
+    /// Closes the active tab; the document closes once no group shows the file.
     fn close_active_tab(&mut self) {
-        let Some(index) = self.tabs.active_index() else {
-            return;
-        };
-        if let Some(tab) = self.tabs.close(index)
+        if let Some(tab) = self.split.close_active()
+            && !self.split.holds(&tab.uri)
             && let Some(file) = self.files.remove(&tab.uri)
             && let Err(error) = self.core.documents().close(file.doc)
         {
             tracing::warn!("closing {}: {error}", tab.uri);
         }
-        if self.tabs.len() == 0 {
+        if self.split.tabs().len() == 0 {
             self.focus_request = Some(FocusTarget::Project);
         }
     }
@@ -565,7 +569,7 @@ impl Workbench {
 
     fn close_quick(&mut self) {
         self.quick_open = None;
-        self.focus_request = Some(if self.tabs.len() > 0 {
+        self.focus_request = Some(if self.split.tabs().len() > 0 {
             FocusTarget::Editor
         } else {
             FocusTarget::Project
@@ -709,7 +713,12 @@ impl Workbench {
     }
 
     fn line_items(&self, query: &str) -> Vec<Item> {
-        let Some(file) = self.tabs.active().and_then(|t| self.files.get(&t.uri)) else {
+        let Some(file) = self
+            .split
+            .tabs()
+            .active()
+            .and_then(|t| self.files.get(&t.uri))
+        else {
             return vec![self.note("quickOpen.noFile")];
         };
         match quick_open::parse_line(query) {
@@ -747,8 +756,7 @@ impl Workbench {
                 self.execute_id("workbench.openFile", vec![Value::from(uri.as_str())], cx)
             }
             Action::Command(id) => self.execute(id, Vec::new(), cx),
-            Action::GotoLine(line) => self
-                .editor_scroll
+            Action::GotoLine(line) => self.editor_scrolls[self.split.active_group()]
                 .scroll_to_item(line.saturating_sub(1), ScrollStrategy::Center),
             Action::None => {}
         }
@@ -1025,11 +1033,12 @@ impl Workbench {
         let menu_ids: Vec<u64> = (0..self.menus.len() as u64)
             .map(|i| node::MENUS + i)
             .collect();
-        let tab_ids: Vec<u64> = (0..self.tabs.len() as u64)
+        let tab_ids: Vec<u64> = (0..self.split.tabs().len() as u64)
             .map(|i| node::TABS + i)
             .collect();
         let editor_label = self
-            .tabs
+            .split
+            .tabs()
             .active()
             .map_or_else(|| self.t("editor.empty"), |t| t.title.clone());
         let mut nodes = vec![
@@ -1087,7 +1096,7 @@ impl Workbench {
                 vec![],
             ));
         }
-        for (i, tab) in self.tabs.iter().enumerate() {
+        for (i, tab) in self.split.tabs().iter().enumerate() {
             nodes.push(node(
                 node::TABS + i as u64,
                 Role::Tab,
@@ -1101,7 +1110,7 @@ impl Workbench {
     /// The navigation bar: the active file's path from its workspace folder.
     fn navigation(&self) -> Vec<String> {
         let folders = self.core.project().folders();
-        let Some(tab) = self.tabs.active() else {
+        let Some(tab) = self.split.tabs().active() else {
             return folders
                 .first()
                 .map(|f| vec![f.name.clone()])
@@ -1349,7 +1358,8 @@ impl Workbench {
     fn status_bar(&self, rect: Rect) -> AnyElement {
         let p = &self.palette;
         let right = self
-            .tabs
+            .split
+            .tabs()
             .active()
             .and_then(|t| self.files.get(&t.uri))
             .map(|f| format!("{}   {}", f.lines.len(), f.format))
@@ -1876,20 +1886,49 @@ impl Workbench {
 
     fn editor_area(&self, rect: Rect, cx: &mut Context<Self>) -> AnyElement {
         let p = &self.palette;
+        // The area's own colour shows as the divider between groups.
         let area = place(rect)
             .id("editor-area")
             .track_focus(&self.editor_focus)
-            .bg(rgba(p.editor))
-            .flex()
-            .flex_col();
-        let Some(active) = self.tabs.active() else {
-            return area.child(self.empty_editor()).into_any_element();
-        };
-        let active_index = self.tabs.active_index();
-        let tabs = self.tabs.iter().enumerate().map(|(i, tab)| {
+            .bg(rgba(p.border));
+        let groups = self.split.groups();
+        if groups.len() == 1 && groups[0].len() == 0 {
+            return area
+                .bg(rgba(p.editor))
+                .child(self.empty_editor())
+                .into_any_element();
+        }
+        let rects = self.split.rects(Rect::new(0.0, 0.0, rect.w, rect.h));
+        let children: Vec<AnyElement> = groups
+            .iter()
+            .zip(rects)
+            .enumerate()
+            .map(|(g, (tabs, r))| self.editor_group(g, tabs, r, cx))
+            .collect();
+        area.children(children).into_any_element()
+    }
+
+    /// One editor group: its tab bar and the active file. The active group's tab is
+    /// underlined in the accent colour, the other group's in the border colour.
+    fn editor_group(
+        &self,
+        g: usize,
+        tabs: &Tabs,
+        rect: Rect,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = &self.palette;
+        let focused_group = g == self.split.active_group();
+        let active_index = tabs.active_index();
+        let tab_items = tabs.iter().enumerate().map(|(i, tab)| {
             let is_active = Some(i) == active_index;
+            let underline = if focused_group {
+                p.tab_underline
+            } else {
+                p.border
+            };
             div()
-                .id(("tab", i))
+                .id(("tab", g * 10_000 + i))
                 .h_full()
                 .px_3()
                 .flex()
@@ -1902,24 +1941,25 @@ impl Workbench {
                 } else {
                     p.tab_inactive
                 }))
-                .when(is_active, |d| {
-                    d.border_b_2().border_color(rgba(p.tab_underline))
-                })
+                .when(is_active, |d| d.border_b_2().border_color(rgba(underline)))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    this.tabs.activate(i);
+                    this.split.focus_group(g);
+                    this.split.tabs_mut().activate(i);
                     this.focus_request = Some(FocusTarget::Editor);
+                    this.publish_context();
                     cx.notify();
                 }))
                 .child(tab.title.clone())
                 .child(
                     div()
-                        .id(("close", i))
+                        .id(("close", g * 10_000 + i))
                         .text_color(rgba(p.muted))
                         .hover(|d| d.text_color(rgba(p.foreground)))
                         .child("×")
                         .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                             cx.stop_propagation();
-                            this.tabs.activate(i);
+                            this.split.focus_group(g);
+                            this.split.tabs_mut().activate(i);
                             this.execute_id("workbench.closeEditor", Vec::new(), cx);
                         })),
                 )
@@ -1931,21 +1971,41 @@ impl Workbench {
             .bg(rgba(p.tab_inactive))
             .border_b_1()
             .border_color(rgba(p.border))
-            .children(tabs);
-        let body = match self.files.get(&active.uri) {
-            Some(file) => self.file_view(file, cx),
-            None => div().into_any_element(),
-        };
-        area.child(tab_bar).child(body).into_any_element()
+            .children(tab_items);
+        let body = tabs
+            .active()
+            .and_then(|tab| self.files.get(&tab.uri))
+            .map_or_else(
+                || div().into_any_element(),
+                |file| self.file_view(g, file, cx),
+            );
+        place(rect)
+            .id(("editor-group", g))
+            .bg(rgba(p.editor))
+            .flex()
+            .flex_col()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _window, cx| {
+                    if this.split.active_group() != g {
+                        this.split.focus_group(g);
+                        this.publish_context();
+                        cx.notify();
+                    }
+                }),
+            )
+            .child(tab_bar)
+            .child(body)
+            .into_any_element()
     }
 
     /// A read-only view of the file's lines; editing comes with the editor view (E8).
-    fn file_view(&self, file: &OpenFile, cx: &mut Context<Self>) -> AnyElement {
+    fn file_view(&self, group: usize, file: &OpenFile, cx: &mut Context<Self>) -> AnyElement {
         let lines = file.lines.clone();
         let digits = lines.len().max(1).to_string().len();
         let gutter = 16.0 + digits as f32 * 8.5;
         uniform_list(
-            "file-view",
+            ("file-view", group),
             lines.len(),
             cx.processor(move |this, range: std::ops::Range<usize>, _window, _cx| {
                 let p = &this.palette;
@@ -1972,7 +2032,7 @@ impl Workbench {
                     .collect::<Vec<_>>()
             }),
         )
-        .track_scroll(self.editor_scroll.clone())
+        .track_scroll(self.editor_scrolls[group].clone())
         .flex_1()
         .w_full()
         .font_family(MONOSPACE)

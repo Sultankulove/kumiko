@@ -26,6 +26,10 @@ const MAIN_MENUS: &[(&str, &str, &[Option<&str>])] = &[
             Some("workbench.toggleProject"),
             Some("workbench.toggleProblems"),
             Some("workbench.toggleOutput"),
+            None,
+            Some("workbench.splitRight"),
+            Some("workbench.splitDown"),
+            Some("workbench.unsplit"),
         ],
     ),
     (

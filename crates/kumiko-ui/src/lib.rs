@@ -18,6 +18,7 @@ mod keys;
 pub mod layout;
 mod menus;
 mod palette;
+mod problems;
 mod quick_open;
 mod tabs;
 mod tree;

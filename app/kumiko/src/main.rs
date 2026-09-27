@@ -9,6 +9,8 @@ use anyhow::Context as _;
 use kumiko_core::{CoreApi, CoreOptions};
 use kumiko_types::KumikoDirs;
 
+mod log;
+
 fn main() -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let mut folder = None;
@@ -25,13 +27,9 @@ fn main() -> anyhow::Result<()> {
             _ => folder = Some(PathBuf::from(arg)),
         }
     }
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("KUMIKO_LOG")
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    // Logging reaches the Output panel from the first line on.
+    let output = kumiko_core::output::Output::new();
+    log::init(output.clone());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -40,6 +38,7 @@ fn main() -> anyhow::Result<()> {
         .context("cannot start the async runtime")?;
     let dirs = KumikoDirs::from_env().context("cannot find the user directories")?;
     let mut options = CoreOptions::new(dirs);
+    options.output = output;
     options.builtin_resources = builtin_resources();
     if options.builtin_resources.is_none() {
         tracing::warn!("built-in resources not found; set KUMIKO_RESOURCES");

@@ -390,6 +390,12 @@ impl PluginHost {
         self.slot(plugin).map(|slot| lock(&slot.state).state)
     }
 
+    /// Why the plugin is in its state, e.g. the last crash of a Failed plugin.
+    pub fn reason(&self, plugin: &PluginId) -> Option<String> {
+        self.slot(plugin)
+            .and_then(|slot| lock(&slot.state).reason.clone())
+    }
+
     /// Process id of a running process plugin.
     pub fn pid(&self, plugin: &PluginId) -> Option<u32> {
         let slot = self.slot(plugin)?;

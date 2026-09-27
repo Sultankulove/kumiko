@@ -43,6 +43,7 @@ use kumiko_types::paths::workspace_settings_dir;
 use kumiko_types::{KumikoDirs, PluginId};
 use kumiko_wasm_host::{WasmConfig, WasmEngine};
 
+pub mod output;
 mod plugins;
 
 /// Settings the core itself reacts to.
@@ -77,6 +78,8 @@ pub struct CoreOptions {
     pub plugins: SupervisorConfig,
     /// WASM runtime limits; the compilation cache defaults to `dirs.wasm_cache_dir()`.
     pub wasm: WasmConfig,
+    /// Output channels; pass one in to have logging reach it from the start.
+    pub output: output::Output,
 }
 
 impl CoreOptions {
@@ -93,6 +96,7 @@ impl CoreOptions {
             watcher: WatcherConfig::default(),
             plugins: SupervisorConfig::default(),
             wasm,
+            output: output::Output::new(),
         }
     }
 }
@@ -371,6 +375,11 @@ impl CoreApi {
         if let Err(error) = rebuilt {
             tracing::warn!("indexing files failed: {error}");
         }
+    }
+
+    /// Output channels (the Output panel).
+    pub fn output(&self) -> &output::Output {
+        &self.inner.options.output
     }
 
     /// Files of the workspace for Quick Open.

@@ -16,7 +16,9 @@ use kumiko_core::CoreApi;
 use kumiko_core::config::keymap::{KeyChord, KeySequence, Resolution};
 use kumiko_core::documents::{Encoding, LineEnding, Snapshot};
 use kumiko_core::events::{Delivery, EventFilter};
+use kumiko_core::plugin_host::PluginStatus;
 use kumiko_core::protocol::events::FsChanged;
+use kumiko_core::protocol::events::PluginState;
 use kumiko_core::protocol::methods::fs::FileKind;
 use kumiko_core::service_api::FileSystem;
 use kumiko_types::{CommandId, DocumentId, Uri};
@@ -30,6 +32,7 @@ use crate::keys;
 use crate::layout::{LayoutState, Rect, Regions, Side, TAB_BAR_HEIGHT, ToolWindow};
 use crate::menus::{self, CommandLookup, Menu};
 use crate::palette::Palette;
+use crate::problems::{self, Group, Problem, Severity};
 use crate::quick_open::{self, Action, Item, Mode, QuickOpen};
 use crate::tabs::Tabs;
 use crate::tree::{Entry, FileTree, Row};
@@ -110,6 +113,12 @@ pub struct Workbench {
     quick_focus: FocusHandle,
     /// Files opened, most recent first (shown first in Quick Open).
     recent: Vec<Uri>,
+    /// Problems grouped by source (Problems tool window).
+    problems: Vec<Group>,
+    /// The Output tool window: channel shown, its lines.
+    output_channel: Option<String>,
+    output_lines: Arc<Vec<SharedString>>,
+    output_scroll: UniformListScrollHandle,
     /// Process start, until the first frame is drawn (then logged, section 23 budgets).
     started: Option<Instant>,
     /// The window has been shown (frames before that are not seen).
@@ -164,10 +173,17 @@ impl Workbench {
             quick_open: None,
             quick_focus: cx.focus_handle(),
             recent: Vec::new(),
+            problems: Vec::new(),
+            output_channel: None,
+            output_lines: Arc::new(Vec::new()),
+            output_scroll: UniformListScrollHandle::new(),
         };
         workbench.menus = workbench.build_menus();
         workbench.watch_events(cx);
+        workbench.watch_output(cx);
         workbench.refresh_roots(cx);
+        workbench.refresh_problems();
+        workbench.refresh_output();
         workbench.publish_context();
         workbench
     }
@@ -314,6 +330,8 @@ impl Workbench {
             "fs.changed",
             "workspace.folderAdded",
             "workspace.folderRemoved",
+            "config.*",
+            "plugin.*",
         ];
         let mut events = core.events().subscribe(EventFilter::topics(topics));
         cx.spawn(async move |this, cx| {
@@ -335,6 +353,7 @@ impl Workbench {
             Delivery::Event(event) => event,
             Delivery::Resync(_) => {
                 // Events were lost: reload everything shown.
+                self.refresh_problems();
                 self.refresh_roots(cx);
                 let dirs: Vec<Uri> = self.tree.loaded_dirs().cloned().collect();
                 for dir in dirs {
@@ -343,7 +362,10 @@ impl Workbench {
                 return;
             }
         };
-        if let Some(Ok(changed)) = event.decode::<FsChanged>() {
+        if event.topic.starts_with("config.") || event.topic.starts_with("plugin.") {
+            self.refresh_problems();
+            cx.notify();
+        } else if let Some(Ok(changed)) = event.decode::<FsChanged>() {
             let mut dirs: Vec<Uri> = changed
                 .changes
                 .iter()
@@ -809,6 +831,139 @@ impl Workbench {
             self.refresh_quick();
         }
         cx.notify();
+    }
+
+    // ---- problems and output --------------------------------------------------------------
+
+    /// Everything the core reports as a problem, now.
+    fn collect_problems(&self) -> Vec<Problem> {
+        let file = |path: &std::path::Path| Uri::from_file_path(path).ok();
+        let name = |path: &std::path::Path| {
+            path.file_name().map_or_else(
+                || path.display().to_string(),
+                |n| n.to_string_lossy().into_owned(),
+            )
+        };
+        let mut problems = Vec::new();
+        for problem in self.core.config().problems() {
+            let path = std::path::Path::new(&problem.source);
+            let location = path.is_absolute().then(|| file(path)).flatten();
+            let message = match &problem.key {
+                Some(key) => format!("{key}: {}", problem.message),
+                None => problem.message.clone(),
+            };
+            problems.push(Problem {
+                severity: Severity::Warning,
+                source: if location.is_some() {
+                    name(path)
+                } else {
+                    problem.source.clone()
+                },
+                message,
+                location,
+            });
+        }
+        for problem in self.core.resources().problems() {
+            problems.push(Problem {
+                severity: Severity::Warning,
+                source: name(&problem.path),
+                message: problem.message,
+                location: file(&problem.path),
+            });
+        }
+        let registry = self.core.plugins();
+        for message in registry.problems() {
+            problems.push(Problem {
+                severity: Severity::Error,
+                source: self.t("problems.plugins"),
+                message: message.clone(),
+                location: None,
+            });
+        }
+        let host = self.core.plugin_host();
+        for entry in registry.entries() {
+            let id = entry.manifest().id();
+            let manifest = file(&entry.plugin.dir.join("plugin.toml"));
+            if let PluginStatus::Incompatible(reasons) = &entry.status {
+                for reason in reasons {
+                    problems.push(Problem {
+                        severity: Severity::Warning,
+                        source: id.to_string(),
+                        message: reason.clone(),
+                        location: manifest.clone(),
+                    });
+                }
+            }
+            if host.state(id) == Some(PluginState::Failed) {
+                problems.push(Problem {
+                    severity: Severity::Error,
+                    source: id.to_string(),
+                    message: host.reason(id).unwrap_or_else(|| self.t("problems.failed")),
+                    location: None,
+                });
+            }
+        }
+        problems
+    }
+
+    fn refresh_problems(&mut self) {
+        self.problems = problems::group(self.collect_problems());
+    }
+
+    /// Follows the output channels, at most every 100 ms however fast they grow.
+    fn watch_output(&self, cx: &mut Context<Self>) {
+        let mut changes = self.core.output().watch();
+        cx.spawn(async move |this, cx| {
+            while changes.changed().await.is_ok() {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(100))
+                    .await;
+                changes.mark_unchanged();
+                let updated = this.update(cx, |workbench, cx| {
+                    workbench.refresh_output();
+                    cx.notify();
+                });
+                if updated.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn refresh_output(&mut self) {
+        let channels = self.core.output().channels();
+        if self
+            .output_channel
+            .as_ref()
+            .is_none_or(|c| !channels.contains(c))
+        {
+            self.output_channel = channels.first().cloned();
+        }
+        let lines: Vec<SharedString> = self
+            .output_channel
+            .as_deref()
+            .map(|c| self.core.output().lines(c))
+            .unwrap_or_default()
+            .into_iter()
+            .map(SharedString::from)
+            .collect();
+        let grew = lines.len() != self.output_lines.len();
+        self.output_lines = Arc::new(lines);
+        if grew && !self.output_lines.is_empty() {
+            self.output_scroll
+                .scroll_to_item(self.output_lines.len() - 1, ScrollStrategy::Bottom);
+        }
+    }
+
+    fn channel_title(&self, channel: &str) -> String {
+        let key = format!("output.channel.{channel}");
+        let title = self.t(&key);
+        if title == key {
+            channel.to_owned()
+        } else {
+            title
+        }
     }
 
     // ---- menus ----------------------------------------------------------------------------
@@ -1292,6 +1447,154 @@ impl Workbench {
             .into_any_element()
     }
 
+    fn problems_view(&self, cx: &mut Context<Self>) -> AnyElement {
+        let p = &self.palette;
+        if self.problems.is_empty() {
+            return div()
+                .p_2()
+                .text_color(rgba(p.muted))
+                .child(self.t("problems.none"))
+                .into_any_element();
+        }
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for (g, group) in self.problems.iter().enumerate() {
+            let open = group.location.clone();
+            rows.push(
+                div()
+                    .id(("problem-group", g))
+                    .h(px(ROW_HEIGHT))
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .whitespace_nowrap()
+                    .hover(|d| d.bg(rgba(p.hover)))
+                    .when_some(open, |d, uri| {
+                        d.on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                            this.execute_id(
+                                "workbench.openFile",
+                                vec![Value::from(uri.as_str())],
+                                cx,
+                            );
+                        }))
+                    })
+                    .child(group.source.clone())
+                    .child(
+                        div()
+                            .text_color(rgba(p.muted))
+                            .child(group.problems.len().to_string()),
+                    )
+                    .into_any_element(),
+            );
+            for (i, problem) in group.problems.iter().enumerate() {
+                let color = match problem.severity {
+                    Severity::Error => p.error,
+                    Severity::Warning => p.warning,
+                    Severity::Info => p.info,
+                };
+                rows.push(
+                    div()
+                        .id(("problem", g * 10_000 + i))
+                        .min_h(px(ROW_HEIGHT))
+                        .pl(px(26.0))
+                        .pr_2()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().text_color(rgba(color)).child("●"))
+                        .child(problem.message.clone())
+                        .into_any_element(),
+                );
+            }
+        }
+        div()
+            .id("problems")
+            .flex_1()
+            .overflow_y_scroll()
+            .py_1()
+            .children(rows)
+            .into_any_element()
+    }
+
+    fn output_view(&self, cx: &mut Context<Self>) -> AnyElement {
+        let p = &self.palette;
+        let channels = self.core.output().channels();
+        let selector = channels.into_iter().map(|channel| {
+            let selected = self.output_channel.as_deref() == Some(channel.as_str());
+            let title = self.channel_title(&channel);
+            div()
+                .id(SharedString::from(format!("channel-{channel}")))
+                .px_2()
+                .h_full()
+                .flex()
+                .items_center()
+                .when(selected, |d| d.bg(rgba(p.stripe_active)))
+                .hover(|d| d.bg(rgba(p.hover)))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    this.output_channel = Some(channel.clone());
+                    this.output_lines = Arc::new(Vec::new());
+                    this.refresh_output();
+                    cx.notify();
+                }))
+                .child(title)
+        });
+        let clear = self.output_channel.clone().map(|channel| {
+            div()
+                .id("clear-output")
+                .px_2()
+                .h_full()
+                .flex()
+                .items_center()
+                .text_color(rgba(p.muted))
+                .hover(|d| d.bg(rgba(p.hover)))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    this.core.output().clear(&channel);
+                    this.refresh_output();
+                    cx.notify();
+                }))
+                .child(self.t("output.clear"))
+        });
+        let bar = div()
+            .h(px(24.0))
+            .flex_none()
+            .flex()
+            .justify_between()
+            .border_b_1()
+            .border_color(rgba(p.border))
+            .child(div().flex().h_full().children(selector))
+            .children(clear);
+        let lines = self.output_lines.clone();
+        let list = uniform_list(
+            "output-lines",
+            lines.len(),
+            cx.processor(move |_this, range: std::ops::Range<usize>, _window, _cx| {
+                range
+                    .map(|i| {
+                        div()
+                            .id(i)
+                            .h(px(17.0))
+                            .px_2()
+                            .whitespace_nowrap()
+                            .child(lines[i].clone())
+                    })
+                    .collect::<Vec<_>>()
+            }),
+        )
+        .track_scroll(self.output_scroll.clone())
+        .flex_1()
+        .w_full()
+        .font_family(MONOSPACE)
+        .text_size(px(12.0));
+        div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .child(bar)
+            .child(list)
+            .into_any_element()
+    }
+
     /// The Quick Open popup: an input and up to [`QUICK_ROWS`] results around the selection.
     fn quick_popup(&self, regions: &Regions, cx: &mut Context<Self>) -> Option<AnyElement> {
         let quick = self.quick_open.as_ref()?;
@@ -1410,7 +1713,13 @@ impl Workbench {
             .filter(|w| w.side() == side)
             .map(|tool| {
                 let open = self.layout.is_open(tool);
-                let title = self.t(tool.title_key());
+                let mut title = self.t(tool.title_key());
+                // The Problems button tells how many there are.
+                let (errors, warnings) = problems::counts(&self.problems);
+                let count = errors + warnings;
+                if tool == ToolWindow::Problems && count > 0 {
+                    title = format!("{title} {count}");
+                }
                 let command = tool.toggle_command();
                 let button = div()
                     .id(command)
@@ -1472,11 +1781,8 @@ impl Workbench {
             );
         let body = match tool {
             ToolWindow::Project => self.project_tree(cx),
-            ToolWindow::Problems | ToolWindow::Output => div()
-                .p_2()
-                .text_color(rgba(p.muted))
-                .child(self.t("panel.empty"))
-                .into_any_element(),
+            ToolWindow::Problems => self.problems_view(cx),
+            ToolWindow::Output => self.output_view(cx),
         };
         let panel = place(rect)
             .bg(rgba(p.panel))

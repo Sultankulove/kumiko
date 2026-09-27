@@ -63,11 +63,24 @@ pub fn protocol_schema() -> Value {
     })
 }
 
-/// Pretty-printed schema exactly as committed to `sdk/schema/kpp.schema.json`.
+/// Pretty-printed schema exactly as committed to `sdk/schema/kpp.schema.json`. Keys are
+/// sorted explicitly: another crate in the build may turn on serde_json's `preserve_order`.
 pub fn protocol_schema_file() -> String {
-    let mut text = serde_json::to_string_pretty(&protocol_schema()).unwrap_or_default();
+    let mut text = serde_json::to_string_pretty(&sorted(protocol_schema())).unwrap_or_default();
     text.push('\n');
     text
+}
+
+fn sorted(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<(String, Value)> = map.into_iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            Value::Object(entries.into_iter().map(|(k, v)| (k, sorted(v))).collect())
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(sorted).collect()),
+        other => other,
+    }
 }
 
 fn kind_name(kind: MethodKind) -> &'static str {

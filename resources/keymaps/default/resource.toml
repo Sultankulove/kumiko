@@ -34,3 +34,42 @@ command = "workbench.quickOpen"
 [[binding]]
 key = "ctrl+shift+p"
 command = "workbench.showCommands"
+
+# Tool windows, as in JetBrains IDEs.
+[[binding]]
+key = "alt+1"
+command = "workbench.toggleProject"
+
+[[binding]]
+key = "alt+6"
+command = "workbench.toggleProblems"
+
+[[binding]]
+key = "ctrl+q"
+command = "workbench.quit"
+
+# Editor tabs, as in JetBrains IDEs.
+[[binding]]
+key = "ctrl+f4"
+command = "workbench.closeEditor"
+
+[[binding]]
+key = "alt+right"
+command = "workbench.nextEditor"
+
+[[binding]]
+key = "alt+left"
+command = "workbench.previousEditor"
+
+# Navigation as in JetBrains IDEs, next to ctrl+p / ctrl+shift+p.
+[[binding]]
+key = "ctrl+shift+n"
+command = "workbench.quickOpen"
+
+[[binding]]
+key = "ctrl+shift+a"
+command = "workbench.showCommands"
+
+[[binding]]
+key = "ctrl+g"
+command = "workbench.gotoLine"

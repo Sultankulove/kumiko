@@ -55,6 +55,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 thiserror = "2.0.20"
 globset = "0.4.20"
+# Search (spec, section 11): .gitignore-aware walking, fuzzy matching for Quick Open.
+ignore = "0.4"
+nucleo-matcher = "0.3"
 notify = "8.2.0"
 regex = "1.13.1"
 # Only `\n` breaks lines (buffers are normalized); U+2028 and friends must not, as in LSP.
@@ -64,10 +67,18 @@ tokio = "1.53.1"
 toml = "1"
 toml_edit = "0.25.15"
 tracing = "0.1.44"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi", "std"] }
+anyhow = "1.0.104"
 wasmtime = "49.0.0"
 wasmtime-wasi = "49.0.0"
 wit-bindgen = "0.62.0"
 wit-parser = "0.259.0"
+# UI (ADR-003): GPUI pinned exactly, used only by L1 UI crates; AccessKit attached from outside.
+gpui = "=0.2.2"
+accesskit = "0.25.1"
+accesskit_windows = "0.35.1"
+accesskit_unix = "0.24.0"
+raw-window-handle = "0.6"
 
 [workspace.lints.rust]
 unsafe_code = "deny" # FFI modules opt out locally with a `// SAFETY:` comment on every unsafe block
@@ -78,3 +89,8 @@ unwrap_used = "deny" # allowed in tests via clippy.toml; initialization code opt
 expect_used = "deny"
 dbg_macro = "deny"
 todo = "deny"
+
+# Dependencies build without debug info: a debug build with it took over 20 GB (wasmtime,
+# GPUI, windows). Our own crates keep full debug info.
+[profile.dev.package."*"]
+debug = false

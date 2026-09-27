@@ -26,6 +26,7 @@ fn shipped_resources_are_valid() {
     assert_eq!(
         themes,
         [
+            "kumiko.theme.darcula",
             "kumiko.theme.high-contrast",
             "kumiko.theme.hinoki-dark",
             "kumiko.theme.hinoki-light"
@@ -35,7 +36,11 @@ fn shipped_resources_are_valid() {
     assert_eq!(registry.list(ResourceKind::Keymap).len(), 1);
 
     // Every label a shipped manifest uses is translated in every shipped locale.
-    for package in ["kumiko.theme.hinoki-dark", "kumiko.keymap.default"] {
+    for package in [
+        "kumiko.theme.darcula",
+        "kumiko.theme.hinoki-dark",
+        "kumiko.keymap.default",
+    ] {
         let name = registry.get(package).unwrap().name.unwrap();
         for locale in ["en", "ru"] {
             assert_ne!(registry.label(&name, locale), name, "{package} in {locale}");

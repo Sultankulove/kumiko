@@ -28,6 +28,10 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      # GPUI (kumiko-ui) links X11, Wayland, xkbcommon, fontconfig and Vulkan on Linux.
+      - name: Install UI build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libx11-xcb-dev
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       # WASM plugins compile their component exports only for the wasm target.
       - run: cargo clippy -p kumiko-plugin-sdk -p kumiko-echo-wasm --target wasm32-wasip2 --locked -- -D warnings
@@ -46,6 +50,9 @@ jobs:
       - uses: actions/checkout@v4
       - run: rustup show active-toolchain || rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      - name: Install UI build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libx11-xcb-dev
       # The reference WASM plugin in C (MVP criterion 16) is built with wasi-sdk.
       - name: Install wasi-sdk
         shell: pwsh

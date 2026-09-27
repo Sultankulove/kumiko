@@ -2,7 +2,7 @@
 
 Модульная native IDE на Rust: ядро, UI и плагины держатся вместе только стабильными контрактами, любую деталь можно вынуть и заменить. Платформы MVP — Linux и Windows (ADR-020), первый язык — Java.
 
-Статус: ранняя разработка, этап E6 (UI-спайк: выбран GPUI, ADR-003; Windows и Linux — платформы MVP, ADR-020). Полное ТЗ — [docs/spec/kumiko-tz-v1.0.md](docs/spec/kumiko-tz-v1.0.md), решения — [docs/adr/](docs/adr/), протокол плагинов — [docs/protocol/v1.md](docs/protocol/v1.md).
+Статус: ранняя разработка, этап E7 (UI-хост на GPUI: окно, дерево проекта, вкладки, Quick Open, Problems, Output; Windows и Linux — платформы MVP, ADR-020). Запуск: `cargo run -p kumiko -- <папка>`. Полное ТЗ — [docs/spec/kumiko-tz-v1.0.md](docs/spec/kumiko-tz-v1.0.md), решения — [docs/adr/](docs/adr/), протокол плагинов — [docs/protocol/v1.md](docs/protocol/v1.md).
 
 ## Сборка
 

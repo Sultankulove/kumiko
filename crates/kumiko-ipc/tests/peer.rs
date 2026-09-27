@@ -105,7 +105,13 @@ async fn typed_request_and_error_codes() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ten_thousand_parallel_requests() {
-    let (a, b) = pair(Router::new(), PeerConfig::default(), |_| echo());
+    // All 10 000 may be in flight at once: on a slow machine the handlers do not keep up,
+    // and the default limit would answer `Overloaded` (tested on its own).
+    let config = PeerConfig {
+        max_in_flight: 10_000,
+        ..PeerConfig::default()
+    };
+    let (a, b) = pair(Router::new(), config, |_| echo());
     let started = Instant::now();
     let mut requests = JoinSet::new();
     for i in 0..10_000 {

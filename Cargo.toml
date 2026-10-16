@@ -6,6 +6,7 @@ members = [
     "sdk/rust/kumiko-plugin-sdk",
     "sdk/examples/*",
     "plugins/*",
+    "resources/grammars/*/parser",
     "tests",
 ]
 # Examples in other languages than Rust are not crates.
@@ -57,6 +58,11 @@ thiserror = "2.0.20"
 globset = "0.4.20"
 # Search (spec, section 11): .gitignore-aware walking, fuzzy matching for Quick Open.
 ignore = "0.4"
+# Syntax (spec, section 18): Tree-sitter, grammars loaded as native libraries.
+tree-sitter = "0.27"
+tree-sitter-java = "0.23"
+tree-sitter-language = "0.1"
+libloading = "0.9"
 nucleo-matcher = "0.3"
 notify = "8.2.0"
 regex = "1.13.1"

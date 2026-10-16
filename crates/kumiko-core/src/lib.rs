@@ -23,6 +23,7 @@ pub use kumiko_protocol as protocol;
 pub use kumiko_resources as resources;
 pub use kumiko_search as search;
 pub use kumiko_service_api as service_api;
+pub use kumiko_syntax as syntax;
 pub use kumiko_wasm_host as wasm_host;
 
 use kumiko_commands::CommandRegistry;
@@ -39,6 +40,8 @@ use kumiko_resources::{ResourceKind, ResourceRegistry};
 use kumiko_search::{FileIndex, IndexRoot};
 use kumiko_service_api::EventSink;
 use kumiko_service_api::wasm::WasmRuntime;
+use kumiko_syntax::{GrammarPackage, Highlight, SyntaxService};
+use kumiko_types::DocumentId;
 use kumiko_types::paths::workspace_settings_dir;
 use kumiko_types::{KumikoDirs, PluginId};
 use kumiko_wasm_host::{WasmConfig, WasmEngine};
@@ -112,6 +115,7 @@ struct Inner {
     project: Arc<ProjectService>,
     resources: Arc<ResourceRegistry>,
     files: Arc<FileIndex>,
+    syntax: Arc<SyntaxService>,
     reindex: Arc<tokio::sync::Notify>,
     plugins: plugins::PluginManager,
     tasks: Mutex<Vec<JoinHandle<()>>>,
@@ -160,6 +164,22 @@ impl CoreApi {
         roots.push(options.dirs.resources_dir());
         for problem in resources.scan(&roots) {
             tracing::warn!(path = %problem.path.display(), "{}", problem.message);
+        }
+
+        // Grammars are L3 packages too (spec, section 18).
+        let syntax = Arc::new(SyntaxService::new());
+        let grammars = resources.list(ResourceKind::Grammar);
+        let packages: Vec<GrammarPackage<'_>> = grammars
+            .iter()
+            .filter_map(|p| {
+                Some(GrammarPackage {
+                    dir: &p.dir,
+                    grammar: p.manifest.get("grammar")?,
+                })
+            })
+            .collect();
+        for problem in syntax.load(&packages) {
+            tracing::warn!("grammar: {problem}");
         }
 
         let config = Arc::new(ConfigService::new(sink.clone()));
@@ -231,6 +251,7 @@ impl CoreApi {
                 project,
                 resources,
                 files: Arc::new(FileIndex::new()),
+                syntax,
                 reindex: Arc::new(tokio::sync::Notify::new()),
                 plugins,
                 tasks: Mutex::default(),
@@ -244,16 +265,19 @@ impl CoreApi {
     /// Background reactions between services.
     fn spawn_wiring(&self) {
         let inner = &self.inner;
-        let mut subscriber = inner
-            .events
-            .subscribe(EventFilter::topics(["fs.changed", "config.changed"]));
-        let (events, config, documents, watcher, project, reindex) = (
+        let mut subscriber = inner.events.subscribe(EventFilter::topics([
+            "fs.changed",
+            "config.changed",
+            "document.closed",
+        ]));
+        let (events, config, documents, watcher, project, reindex, syntax) = (
             inner.events.clone(),
             inner.config.clone(),
             inner.documents.clone(),
             inner.watcher.clone(),
             inner.project.clone(),
             inner.reindex.clone(),
+            inner.syntax.clone(),
         );
         let user_keymap = inner.options.dirs.user_keymap_file();
         let task =
@@ -268,11 +292,20 @@ impl CoreApi {
                             for doc in documents.list() {
                                 let _ = documents.external_change(&doc.uri).await;
                             }
-                            subscriber = events
-                                .subscribe(EventFilter::topics(["fs.changed", "config.changed"]));
+                            subscriber = events.subscribe(EventFilter::topics([
+                                "fs.changed",
+                                "config.changed",
+                                "document.closed",
+                            ]));
                             continue;
                         }
                     };
+                    if event.topic == "document.closed" {
+                        // The closed document's tree goes with it.
+                        let open: Vec<DocumentId> = documents.list().iter().map(|s| s.id).collect();
+                        syntax.retain(&open);
+                        continue;
+                    }
                     if let Some(Ok(batch)) = event.decode::<FsChanged>() {
                         if batch.changes.iter().any(|c| {
                             matches!(c.kind, FsChangeKind::Created | FsChangeKind::Deleted)
@@ -374,6 +407,64 @@ impl CoreApi {
         .await;
         if let Err(error) = rebuilt {
             tracing::warn!("indexing files failed: {error}");
+        }
+    }
+
+    /// The Syntax service (grammars, trees).
+    pub fn syntax(&self) -> &SyntaxService {
+        &self.inner.syntax
+    }
+
+    /// The document's language: the one it was opened with, else by its file extension.
+    pub fn language_of(&self, document: DocumentId) -> Option<String> {
+        let snapshot = self.inner.documents.snapshot(document).ok()?;
+        snapshot.language_id.clone().or_else(|| {
+            let path = snapshot.uri.to_file_path()?;
+            self.inner.syntax.language_for_path(&path)
+        })
+    }
+
+    /// Brings the document's syntax tree to its current version (incrementally when the
+    /// edits since are still known). Large files get no tree (spec, section 12).
+    fn sync_syntax(&self, document: DocumentId) -> bool {
+        let Ok(snapshot) = self.inner.documents.snapshot(document) else {
+            return false;
+        };
+        if snapshot.large {
+            return false;
+        }
+        let Some(language) = self.language_of(document) else {
+            return false;
+        };
+        let documents = &self.inner.documents;
+        self.inner.syntax.sync(
+            document,
+            &language,
+            snapshot.version,
+            &snapshot.text,
+            |version| documents.changes_since(document, version),
+        )
+    }
+
+    /// Highlights of a byte range of the document, at its current version.
+    pub fn highlights(
+        &self,
+        document: DocumentId,
+        range: std::ops::Range<usize>,
+    ) -> Vec<Highlight> {
+        if self.sync_syntax(document) {
+            self.inner.syntax.highlights(document, range)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Foldable regions of the document as `(first line, last line)`.
+    pub fn folds(&self, document: DocumentId) -> Vec<(usize, usize)> {
+        if self.sync_syntax(document) {
+            self.inner.syntax.folds(document)
+        } else {
+            Vec::new()
         }
     }
 

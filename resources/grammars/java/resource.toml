@@ -1,0 +1,14 @@
+# Java for the Syntax service (spec, sections 18 and 21): the parser library and its queries.
+[resource]
+id = "kumiko.grammar.java"
+kind = "grammar"
+version = "0.1.0"
+name = "Java"
+
+[grammar]
+language = "java"
+extensions = ["java"]
+# File name without prefix and extension: kumiko_grammar_java.dll / libkumiko_grammar_java.so,
+# looked up in this directory, then next to the executable (development builds).
+library = "kumiko_grammar_java"
+symbol = "kumiko_grammar_language"

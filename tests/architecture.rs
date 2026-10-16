@@ -85,7 +85,12 @@ const FORBIDDEN_WORDS: &[&str] = &["java", "maven", "gradle", "git"];
 
 /// `rel_path` is the package directory relative to the workspace root, with `/` separators.
 fn classify(name: &str, rel_path: &str) -> Option<Layer> {
-    if rel_path.starts_with("plugins/") || rel_path.starts_with("sdk/examples/") {
+    // Grammar parsers under resources/ are built artifacts of L3 packages: like plugins they
+    // may not use the core.
+    if rel_path.starts_with("plugins/")
+        || rel_path.starts_with("sdk/examples/")
+        || rel_path.starts_with("resources/")
+    {
         return Some(Layer::Plugin);
     }
     let layer = match name {

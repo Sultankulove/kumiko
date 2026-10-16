@@ -667,6 +667,11 @@ impl Workbench {
             line_highlight: p.line_highlight,
             selection: p.editor_selection,
             caret: p.caret,
+            syntax: p
+                .syntax
+                .iter()
+                .map(|s| (s.capture.clone(), s.color, s.bold, s.italic))
+                .collect(),
             font_family: family,
             font_size,
             line_height: (font_size * 1.4).round(),

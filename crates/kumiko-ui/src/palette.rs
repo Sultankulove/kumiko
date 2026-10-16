@@ -42,6 +42,17 @@ pub struct Palette {
     pub error: Rgba,
     pub warning: Rgba,
     pub info: Rgba,
+    /// Syntax token styles of the theme (spec, section 21), by capture name.
+    pub syntax: Vec<SyntaxColor>,
+}
+
+/// How a syntax capture (`keyword`, `string`, …) is drawn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyntaxColor {
+    pub capture: String,
+    pub color: Rgba,
+    pub bold: bool,
+    pub italic: bool,
 }
 
 fn pack(color: Color) -> Rgba {
@@ -50,7 +61,20 @@ fn pack(color: Color) -> Rgba {
 
 impl Palette {
     pub fn from_theme(theme: &Theme) -> Self {
-        Self::resolve(|token| theme.color(token), theme.base != ThemeBase::Light)
+        let mut palette = Self::resolve(|token| theme.color(token), theme.base != ThemeBase::Light);
+        palette.syntax = theme
+            .syntax_styles()
+            .into_iter()
+            .filter_map(|(capture, style)| {
+                Some(SyntaxColor {
+                    capture,
+                    color: pack(style.fg?),
+                    bold: style.bold,
+                    italic: style.italic,
+                })
+            })
+            .collect();
+        palette
     }
 
     /// The built-in dark colours, for when no theme can be loaded.
@@ -186,6 +210,7 @@ impl Palette {
             error: pick(&["error"], 0xBC3F3CFF, 0xC75450FF),
             warning: pick(&["warning"], 0xBE9117FF, 0xB58900FF),
             info: pick(&["info"], 0x3592C4FF, 0x3574F0FF),
+            syntax: Vec::new(),
         }
     }
 }

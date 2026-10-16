@@ -41,6 +41,8 @@ pub struct EditorStyle {
     pub line_highlight: Hsla,
     pub selection: Hsla,
     pub caret: Hsla,
+    /// Capture name, colour, bold, italic.
+    pub syntax: Vec<(String, Hsla, bool, bool)>,
     pub font_family: SharedString,
     pub font_size: f32,
     pub line_height: f32,
@@ -933,6 +935,27 @@ impl Element for EditorElement {
         let last_row = (first_row + visible).min(view.map.row_count());
         let offset_y = px(first_row as f32 * style.line_height) - scroll.y;
         let caret_line = view.rope.char_to_line(view.selection.primary().head);
+        // Syntax highlights of the visible text (the tree catches up with the document).
+        let visible_chars = if last_row > first_row {
+            view.map.row(&view.rope, first_row).start..view.map.row(&view.rope, last_row - 1).end
+        } else {
+            0..0
+        };
+        let len_bytes = view.rope.len_bytes();
+        let highlights: Vec<Painted> = view
+            .core
+            .highlights(
+                view.doc,
+                view.rope.char_to_byte(visible_chars.start)
+                    ..view.rope.char_to_byte(visible_chars.end),
+            )
+            .into_iter()
+            .map(|h| {
+                let range = view.rope.byte_to_char(h.range.start.min(len_bytes))
+                    ..view.rope.byte_to_char(h.range.end.min(len_bytes));
+                (range, token_style(&style.syntax, &h.capture))
+            })
+            .collect();
         let tab_width = view.map.config().tab_width;
 
         let mut rows = Vec::with_capacity(last_row.saturating_sub(first_row));
@@ -960,7 +983,7 @@ impl Element for EditorElement {
                 }
             }
             offsets.push(shown.len());
-            let mut runs = vec![run(shown.len(), style.foreground)];
+            let mut runs = syntax_runs(&row, &offsets, &highlights, &text_font, style.foreground);
             if let Some(marked) = view.marked.as_ref()
                 && marked.start < row.end.max(row.start + 1)
                 && marked.end > row.start
@@ -1144,4 +1167,78 @@ impl Element for EditorElement {
         );
         self.view.update(cx, |view, _cx| view.layout = Some(layout));
     }
+}
+
+/// A token's colour, bold and italic.
+type TokenStyle = (Hsla, bool, bool);
+/// Chars of the text and how a highlight paints them.
+type Painted = (StdRange<usize>, Option<TokenStyle>);
+
+/// The style of a capture, else of its dotted parents (`function.method` → `function`).
+fn token_style(styles: &[(String, Hsla, bool, bool)], capture: &str) -> Option<(Hsla, bool, bool)> {
+    let mut name = capture;
+    loop {
+        if let Some((_, color, bold, italic)) = styles.iter().find(|(c, ..)| c == name) {
+            return Some((*color, *bold, *italic));
+        }
+        name = &name[..name.rfind('.')?];
+    }
+}
+
+/// Text runs of one row from the highlights: later (inner) captures paint over outer ones.
+fn syntax_runs(
+    row: &crate::display::Row,
+    offsets: &[usize],
+    highlights: &[Painted],
+    base: &gpui::Font,
+    foreground: Hsla,
+) -> Vec<TextRun> {
+    let chars = row.end - row.start;
+    let mut styles: Vec<Option<(Hsla, bool, bool)>> = vec![None; chars];
+    for (range, token) in highlights {
+        if token.is_none() || range.end <= row.start || range.start >= row.end {
+            continue;
+        }
+        let from = range.start.max(row.start) - row.start;
+        let to = range.end.min(row.end) - row.start;
+        for slot in &mut styles[from..to] {
+            *slot = *token;
+        }
+    }
+    let make = |len: usize, token: Option<(Hsla, bool, bool)>| {
+        let mut font = base.clone();
+        let mut color = foreground;
+        if let Some((c, bold, italic)) = token {
+            color = c;
+            if bold {
+                font.weight = gpui::FontWeight::BOLD;
+            }
+            if italic {
+                font.style = gpui::FontStyle::Italic;
+            }
+        }
+        TextRun {
+            len,
+            font,
+            color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }
+    };
+    let mut runs: Vec<TextRun> = Vec::new();
+    let mut start = 0;
+    while start < chars {
+        let token = styles[start];
+        let mut end = start + 1;
+        while end < chars && styles[end] == token {
+            end += 1;
+        }
+        runs.push(make(offsets[end] - offsets[start], token));
+        start = end;
+    }
+    if runs.is_empty() {
+        runs.push(make(0, None));
+    }
+    runs
 }

@@ -18,6 +18,9 @@ pub struct EditorTheme {
     pub line_highlight: u32,
     pub selection: u32,
     pub caret: u32,
+    /// Syntax token styles: capture name (`keyword`, `function.method`, …), colour, bold,
+    /// italic. A capture without its own style uses its dotted parent's.
+    pub syntax: Vec<(String, u32, bool, bool)>,
     pub font_family: String,
     pub font_size: f32,
     pub line_height: f32,

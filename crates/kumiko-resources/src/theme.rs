@@ -129,6 +129,14 @@ impl Theme {
         self.colors.get(token).copied()
     }
 
+    /// Every syntax style the theme (with its parents) defines, by capture name.
+    pub fn syntax_styles(&self) -> Vec<(String, SyntaxStyle)> {
+        self.syntax
+            .iter()
+            .map(|(capture, style)| (capture.clone(), *style))
+            .collect()
+    }
+
     /// Style of a capture, falling back to its dotted parents.
     pub fn syntax(&self, capture: &str) -> Option<SyntaxStyle> {
         let mut name = capture;

@@ -20,6 +20,13 @@ fn style(theme: &EditorTheme) -> EditorStyle {
         line_highlight: rgba(theme.line_highlight).into(),
         selection: rgba(theme.selection).into(),
         caret: rgba(theme.caret).into(),
+        syntax: theme
+            .syntax
+            .iter()
+            .map(|(capture, color, bold, italic)| {
+                (capture.clone(), rgba(*color).into(), *bold, *italic)
+            })
+            .collect(),
         font_family: theme.font_family.clone().into(),
         font_size: theme.font_size,
         line_height: theme.line_height,

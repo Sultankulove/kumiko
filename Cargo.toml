@@ -61,6 +61,9 @@ nucleo-matcher = "0.3"
 notify = "8.2.0"
 regex = "1.13.1"
 # Only `\n` breaks lines (buffers are normalized); U+2028 and friends must not, as in LSP.
+# Editor: grapheme boundaries and display widths.
+unicode-segmentation = "1.13"
+unicode-width = "0.2"
 ropey = { version = "1.6.1", default-features = false, features = ["simd"] }
 tempfile = "3.27.0"
 tokio = "1.53.1"

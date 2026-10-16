@@ -6,6 +6,8 @@ pub struct LineInput {
     text: String,
     /// Caret position in characters.
     caret: usize,
+    /// The whole text is selected: typing replaces it (a prompt with a suggestion).
+    all_selected: bool,
 }
 
 impl LineInput {
@@ -13,6 +15,27 @@ impl LineInput {
         Self {
             text: text.to_owned(),
             caret: text.chars().count(),
+            all_selected: false,
+        }
+    }
+
+    pub fn select_all(&mut self) {
+        self.all_selected = !self.text.is_empty();
+        self.caret = self.len();
+    }
+
+    pub fn is_all_selected(&self) -> bool {
+        self.all_selected
+    }
+
+    /// Drops a whole-text selection by deleting the text; `true` if there was one.
+    fn take_selection(&mut self) -> bool {
+        if std::mem::take(&mut self.all_selected) {
+            self.text.clear();
+            self.caret = 0;
+            true
+        } else {
+            false
         }
     }
 
@@ -37,6 +60,7 @@ impl LineInput {
     }
 
     pub fn insert(&mut self, text: &str) {
+        self.take_selection();
         let text: String = text.chars().filter(|c| !c.is_control()).collect();
         let at = self.byte(self.caret);
         self.text.insert_str(at, &text);
@@ -44,6 +68,9 @@ impl LineInput {
     }
 
     pub fn backspace(&mut self) {
+        if self.take_selection() {
+            return;
+        }
         if self.caret == 0 {
             return;
         }
@@ -53,6 +80,9 @@ impl LineInput {
     }
 
     pub fn delete(&mut self) {
+        if self.take_selection() {
+            return;
+        }
         if self.caret >= self.len() {
             return;
         }
@@ -61,18 +91,22 @@ impl LineInput {
     }
 
     pub fn left(&mut self) {
+        self.all_selected = false;
         self.caret = self.caret.saturating_sub(1);
     }
 
     pub fn right(&mut self) {
+        self.all_selected = false;
         self.caret = (self.caret + 1).min(self.len());
     }
 
     pub fn home(&mut self) {
+        self.all_selected = false;
         self.caret = 0;
     }
 
     pub fn end(&mut self) {
+        self.all_selected = false;
         self.caret = self.len();
     }
 }
@@ -101,5 +135,26 @@ mod tests {
         input.delete();
         assert_eq!(input.split(), (">Прит", ""));
         assert_eq!(LineInput::with_text(":12").split(), (":12", ""));
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+
+    #[test]
+    fn a_selected_suggestion_is_replaced_by_typing() {
+        let mut input = LineInput::with_text("count");
+        input.select_all();
+        input.insert("a");
+        assert_eq!(input.text(), "a");
+        let mut input = LineInput::with_text("count");
+        input.select_all();
+        input.end();
+        input.insert("er");
+        assert_eq!(input.text(), "counter", "moving keeps the text");
+        input.select_all();
+        input.backspace();
+        assert_eq!(input.text(), "");
     }
 }

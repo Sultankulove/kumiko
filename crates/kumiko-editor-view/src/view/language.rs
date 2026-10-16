@@ -87,6 +87,7 @@ impl EditorView {
             "editor.showIntentions" => self.show_intentions(cx),
             "editor.gotoDefinition" => self.goto_definition(cx),
             "editor.quickDocumentation" => self.quick_documentation(cx),
+            "editor.parameterInfo" => self.parameter_info(cx),
             _ => return false,
         }
         true
@@ -97,6 +98,15 @@ impl EditorView {
         let Some(popup) = &mut self.popup else {
             return false;
         };
+        // Parameter info stays while typing the call; only Escape closes it.
+        if matches!(popup, Popup::Signature { .. }) {
+            if command == "editor.escape" {
+                self.popup = None;
+                cx.notify();
+                return true;
+            }
+            return false;
+        }
         let delta = match command {
             "editor.cursorUp" => -1,
             "editor.cursorDown" => 1,
@@ -121,7 +131,7 @@ impl EditorView {
             Popup::Actions(actions) if delta != 0 => actions.move_by(delta),
             Popup::Completion(_) => self.accept_completion(cx),
             Popup::Actions(_) => self.run_selected_action(cx),
-            Popup::Info(_) => {
+            Popup::Info(_) | Popup::Signature { .. } => {
                 self.popup = None;
                 return false;
             }
@@ -135,10 +145,15 @@ impl EditorView {
         if matches!(self.popup, Some(Popup::Info(_))) {
             self.popup = None;
         }
+        let signature = matches!(self.popup, Some(Popup::Signature { .. }));
         if let Some(Popup::Completion(_)) = &self.popup {
             self.refilter();
         } else if text == "." && self.selection.len() == 1 {
             self.complete(cx);
+        } else if text == ")" && signature {
+            self.popup = None;
+        } else if text == "(" || (text == "," && signature) {
+            self.parameter_info(cx);
         }
     }
 
@@ -171,6 +186,21 @@ impl EditorView {
 
     fn caret(&self) -> Position {
         position_of(&self.rope, self.selection.primary().head)
+    }
+
+    /// The primary caret as a document position.
+    pub fn caret_location(&self) -> Position {
+        self.caret()
+    }
+
+    /// The identifier the primary caret is in or right after.
+    pub fn word_at_caret(&self) -> String {
+        let head = self.selection.primary().head;
+        let mut end = head;
+        while end < self.rope.len_chars() && is_word(self.rope.char(end)) {
+            end += 1;
+        }
+        self.rope.slice(self.word_start(head)..end).to_string()
     }
 
     fn complete(&mut self, cx: &mut Context<Self>) {
@@ -386,6 +416,35 @@ impl EditorView {
         .detach();
     }
 
+    /// Ctrl+P (and after `(`): the signature of the call around the caret.
+    fn parameter_info(&mut self, cx: &mut Context<Self>) {
+        let (core, uri, position) = (self.core.clone(), self.uri.clone(), self.caret());
+        let task = self
+            .runtime
+            .spawn(async move { core.language().signature_help(&uri, position).await });
+        cx.spawn(async move |this, cx| {
+            let Ok(help) = task.await else {
+                return;
+            };
+            let _ = this.update(cx, |view, cx| {
+                match help.and_then(|h| {
+                    h.signatures
+                        .first()
+                        .cloned()
+                        .map(|l| (l, h.active_parameter))
+                }) {
+                    Some((label, active)) => view.popup = Some(Popup::Signature { label, active }),
+                    None if matches!(view.popup, Some(Popup::Signature { .. })) => {
+                        view.popup = None
+                    }
+                    None => {}
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Moves the caret to `position` and scrolls it into the middle (Go to, Problems).
     pub fn goto_position(&mut self, position: Position, cx: &mut Context<Self>) {
         let at = char_of(&self.rope, position);
@@ -467,16 +526,47 @@ impl EditorView {
                 });
                 div().flex().flex_col().children(rows).into_any_element()
             }
+            Popup::Signature { label, active } => {
+                let (before, current, after) = match active {
+                    Some(range) if range.end <= label.len() => (
+                        &label[..range.start],
+                        &label[range.clone()],
+                        &label[range.end..],
+                    ),
+                    _ => (label.as_str(), "", ""),
+                };
+                div()
+                    .px_2()
+                    .py_0p5()
+                    .flex()
+                    .whitespace_nowrap()
+                    .child(before.to_owned())
+                    .child(
+                        div()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(current.to_owned()),
+                    )
+                    .child(after.to_owned())
+                    .into_any_element()
+            }
             Popup::Info(text) => div()
                 .max_w(px(600.0))
                 .p_2()
                 .children(text.lines().map(|line| div().child(line.to_owned())))
                 .into_any_element(),
         };
+        // Parameter info sits above the line, as in IntelliJ; lists go below.
+        let above = matches!(popup, Popup::Signature { .. });
+        let (corner, at) = if above {
+            (gpui::Corner::BottomLeft, point(caret.left(), caret.top()))
+        } else {
+            (gpui::Corner::TopLeft, point(caret.left(), caret.bottom()))
+        };
         Some(
             gpui::deferred(
                 gpui::anchored()
-                    .position(point(caret.left(), caret.bottom()))
+                    .anchor(corner)
+                    .position(at)
                     .snap_to_window_with_margin(px(8.0))
                     .child(
                         div()

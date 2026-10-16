@@ -126,6 +126,7 @@ pub const COMMANDS: &[&str] = &[
     "editor.showIntentions",
     "editor.gotoDefinition",
     "editor.quickDocumentation",
+    "editor.parameterInfo",
     "edit.undo",
     "edit.redo",
     "file.save",

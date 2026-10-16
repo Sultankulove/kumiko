@@ -376,3 +376,32 @@ when = "editorFocus"
 key = "ctrl+q"
 command = "editor.quickDocumentation"
 when = "editorFocus"
+
+[[binding]]
+key = "ctrl+p"
+command = "editor.parameterInfo"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+f12"
+command = "workbench.fileStructure"
+
+[[binding]]
+key = "alt+f7"
+command = "workbench.findUsages"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+alt+f7"
+command = "workbench.findUsages"
+when = "editorFocus"
+
+[[binding]]
+key = "shift+f6"
+command = "workbench.rename"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+alt+l"
+command = "workbench.reformat"
+when = "editorFocus"

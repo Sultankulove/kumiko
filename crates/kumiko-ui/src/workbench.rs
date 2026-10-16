@@ -39,6 +39,8 @@ use crate::problems::{self, Group, Problem, Severity};
 use crate::quick_open::{self, Action, Item, Mode, QuickOpen};
 use crate::state::{self, GroupState, WorkspaceState};
 use crate::tabs::{Split, Tab, Tabs};
+
+mod language;
 use crate::tree::{Entry, FileTree, Row};
 
 #[cfg(windows)]
@@ -114,6 +116,11 @@ pub struct Workbench {
     provider: Rc<dyn EditorProvider>,
     /// The last message for the status bar (e.g. a failed command).
     message: Option<String>,
+    /// Symbols of a file for `@` in Quick Open, usages for Alt+F7, the place a rename is
+    /// for.
+    symbols: Option<(Uri, Vec<kumiko_core::language::Symbol>)>,
+    usages: Vec<Item>,
+    language_target: Option<(Uri, kumiko_types::Position)>,
     a11y: Option<Bridge>,
     /// The open Quick Open popup and its focus.
     quick_open: Option<QuickOpen>,
@@ -179,6 +186,9 @@ impl Workbench {
             editors: HashMap::new(),
             provider,
             message: None,
+            symbols: None,
+            usages: Vec::new(),
+            language_target: None,
             a11y: None,
             started: Some(started),
             shown: false,
@@ -244,7 +254,13 @@ impl Workbench {
                 self.reveal = position.map(|p| (uri.clone(), p));
                 self.open_file(uri, cx)
             }
-            UiCommand::QuickOpen(mode) => self.open_quick(mode),
+            UiCommand::QuickOpen(mode) => {
+                self.open_quick(mode);
+                self.ensure_symbols(cx);
+            }
+            UiCommand::FindUsages => self.find_usages(cx),
+            UiCommand::Rename => self.open_rename(cx),
+            UiCommand::Reformat => self.reformat(cx),
             UiCommand::SelectTheme => {
                 self.open_menu = None;
                 self.quick_open = Some(QuickOpen::picker(Mode::Themes));
@@ -772,8 +788,10 @@ impl Workbench {
             Mode::Files => self.file_items(&query),
             Mode::Commands => self.command_items(&query),
             Mode::Line => self.line_items(&query),
-            Mode::Symbols => vec![self.note("quickOpen.symbolsUnavailable")],
+            Mode::Symbols => self.symbol_items(&query),
             Mode::Themes => self.theme_items(&query),
+            Mode::Usages => self.usage_items(&query),
+            Mode::Rename => self.rename_items(&query),
         };
         let items = if items.is_empty() {
             vec![self.note("quickOpen.noResults")]
@@ -1004,6 +1022,11 @@ impl Workbench {
         if action == Action::None {
             return;
         }
+        let query = self
+            .quick_open
+            .as_ref()
+            .map(|q| q.query().to_owned())
+            .unwrap_or_default();
         self.close_quick();
         match action {
             Action::OpenFile(uri) => {
@@ -1013,6 +1036,15 @@ impl Workbench {
             Action::SetTheme(id) => {
                 self.execute_id("workbench.setTheme", vec![Value::from(id)], cx)
             }
+            Action::OpenAt(uri, at) => {
+                let args = vec![
+                    Value::from(uri.as_str()),
+                    Value::from(at.line),
+                    Value::from(at.character),
+                ];
+                self.execute_id("workbench.openFile", args, cx)
+            }
+            Action::Rename => self.rename(query, cx),
             Action::GotoLine(line) => {
                 if let Some(editor) = self.active_editor() {
                     (editor.goto_line)(line, cx);
@@ -1067,6 +1099,10 @@ impl Workbench {
                 quick.input.delete();
                 true
             }
+            "a" if modifiers.control || modifiers.platform => {
+                quick.input.select_all();
+                false
+            }
             "left" => {
                 quick.input.left();
                 false
@@ -1098,6 +1134,7 @@ impl Workbench {
         cx.stop_propagation();
         if edited {
             self.refresh_quick();
+            self.ensure_symbols(cx);
         }
         cx.notify();
     }
@@ -2029,15 +2066,29 @@ impl Workbench {
             .border_b_1()
             .border_color(rgba(p.border))
             .whitespace_nowrap()
-            .child(before.to_owned())
-            .child(caret)
-            .child(after.to_owned())
+            .map(|d| {
+                if quick.input.is_all_selected() {
+                    // A suggested answer (Rename): selected, typing replaces it.
+                    d.child(div().bg(rgba(p.selection)).child(before.to_owned()))
+                        .child(caret)
+                } else {
+                    d.child(before.to_owned())
+                        .child(caret)
+                        .child(after.to_owned())
+                }
+            })
             .when(quick.input.text().is_empty(), |d| {
+                let placeholder = match quick.mode() {
+                    Mode::Usages => "usages.placeholder",
+                    Mode::Rename => "rename.prompt",
+                    Mode::Themes => "quickOpen.themes",
+                    _ => "quickOpen.placeholder",
+                };
                 d.child(
                     div()
                         .pl_2()
                         .text_color(rgba(p.muted))
-                        .child(self.t("quickOpen.placeholder")),
+                        .child(self.t(placeholder)),
                 )
             });
         let first = quick.selected.saturating_sub(QUICK_ROWS - 1);

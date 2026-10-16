@@ -40,6 +40,10 @@ pub struct EditorStatus {
     pub line: usize,
     pub column: usize,
     pub carets: usize,
+    /// The primary caret as a document position (0-based, UTF-8 byte in the line) and the
+    /// identifier around it, for language commands of the workbench.
+    pub caret: kumiko_types::Position,
+    pub word: String,
     /// The last failure (e.g. editing a read-only file).
     pub message: Option<String>,
 }

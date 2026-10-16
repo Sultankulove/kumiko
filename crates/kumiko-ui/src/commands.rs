@@ -33,6 +33,10 @@ pub enum UiCommand {
     Unsplit,
     NextEditor,
     PreviousEditor,
+    /// Language commands at the active editor's caret.
+    FindUsages,
+    Rename,
+    Reformat,
     Quit,
 }
 
@@ -74,6 +78,12 @@ const COMMANDS: &[(&str, Parse)] = &[
     }),
     ("workbench.selectTheme", |_| Ok(UiCommand::SelectTheme)),
     ("workbench.setTheme", set_theme),
+    ("workbench.fileStructure", |_| {
+        Ok(UiCommand::QuickOpen(Mode::Symbols))
+    }),
+    ("workbench.findUsages", |_| Ok(UiCommand::FindUsages)),
+    ("workbench.rename", |_| Ok(UiCommand::Rename)),
+    ("workbench.reformat", |_| Ok(UiCommand::Reformat)),
     ("workbench.quit", |_| Ok(UiCommand::Quit)),
 ];
 

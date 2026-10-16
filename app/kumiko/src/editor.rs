@@ -79,6 +79,8 @@ impl EditorProvider for Editors {
                     line,
                     column,
                     carets: view.caret_count(),
+                    caret: view.caret_location(),
+                    word: view.word_at_caret(),
                     // A failure first, else the problem under the caret, as IntelliJ shows it.
                     message: view
                         .message

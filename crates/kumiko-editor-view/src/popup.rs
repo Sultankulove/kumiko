@@ -96,6 +96,11 @@ pub enum Popup {
     Actions(Actions),
     /// Quick documentation or a message ("No suggestions").
     Info(String),
+    /// Parameter info: the signature, its active parameter as a byte range.
+    Signature {
+        label: String,
+        active: Option<std::ops::Range<usize>>,
+    },
 }
 
 #[cfg(test)]

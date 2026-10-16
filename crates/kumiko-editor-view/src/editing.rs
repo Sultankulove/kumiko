@@ -393,14 +393,14 @@ pub fn move_lines(rope: &Rope, selection: &Selection, up: bool) -> Edit {
         let start = rope.line_to_char(other);
         let end = rope.line_to_char(last) + line_len(rope, last);
         let shift = -((neighbour.chars().count() + 1) as isize);
-        (other, start, end, format!("{block}\n{neighbour}"), shift)
+        (start, end, format!("{block}\n{neighbour}"), shift)
     } else {
         let other = last + 1;
         let neighbour = text_of(other, other);
         let start = rope.line_to_char(first);
         let end = rope.line_to_char(other) + line_len(rope, other);
         let shift = (neighbour.chars().count() + 1) as isize;
-        (other, start, end, format!("{neighbour}\n{block}"), shift)
+        (start, end, format!("{neighbour}\n{block}"), shift)
     };
     let moved = |c: usize| (c as isize + shift).max(0) as usize;
     Edit {

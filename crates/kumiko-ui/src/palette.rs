@@ -26,6 +26,7 @@ pub struct Palette {
     pub line_highlight: Rgba,
     pub editor_selection: Rgba,
     pub caret: Rgba,
+    pub find_match: Rgba,
     pub tab_active: Rgba,
     pub tab_inactive: Rgba,
     pub tab_underline: Rgba,
@@ -161,6 +162,11 @@ impl Palette {
                 &["editor.cursor", "editor.foreground"],
                 0xBBBBBBFF,
                 0x000000FF,
+            ),
+            find_match: pick(
+                &["editor.findMatch", "editor.selection"],
+                0x32593DFF,
+                0xF2E9A4FF,
             ),
             tab_active: pick(
                 &["tab.active.background", "editor.background"],

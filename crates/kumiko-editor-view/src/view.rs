@@ -10,11 +10,11 @@
 use std::ops::Range as StdRange;
 
 use gpui::{
-    App, Bounds, ClipboardItem, Context, Element, ElementId, ElementInputHandler, Entity,
-    EntityInputHandler, FocusHandle, Focusable, GlobalElementId, Hsla, IntoElement, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render,
-    ScrollWheelEvent, ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle,
-    Window, div, fill, font, point, prelude::*, px, relative, size,
+    App, Bounds, ClickEvent, ClipboardItem, Context, Element, ElementId, ElementInputHandler,
+    Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, Hsla, IntoElement,
+    KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Point, Render, ScrollWheelEvent, ShapedLine, SharedString, Style, TextRun, UTF16Selection,
+    UnderlineStyle, Window, div, fill, font, point, prelude::*, px, relative, size,
 };
 use kumiko_core::CoreApi;
 use kumiko_core::events::{Delivery, EventFilter};
@@ -26,7 +26,9 @@ use tokio::runtime::Handle;
 use crate::carets;
 use crate::display::{DisplayConfig, DisplayMap};
 use crate::editing::{self, Copied, Edit, Indent};
+use crate::find::{Field, FindBar, Focus};
 use crate::movement::{Motion, move_selection};
+use crate::search;
 use crate::selection::{Assoc, Change, Range, Selection, map_position};
 use crate::text::{char_of, char_of_utf16, utf16_of};
 
@@ -41,6 +43,8 @@ pub struct EditorStyle {
     pub line_highlight: Hsla,
     pub selection: Hsla,
     pub caret: Hsla,
+    /// Background of find matches.
+    pub find_match: Hsla,
     /// Capture name, colour, bold, italic.
     pub syntax: Vec<(String, Hsla, bool, bool)>,
     pub font_family: SharedString,
@@ -97,6 +101,11 @@ pub const COMMANDS: &[&str] = &[
     "editor.selectAllOccurrences",
     "editor.escape",
     "editor.toggleSoftWrap",
+    "editor.find",
+    "editor.replace",
+    "editor.findNext",
+    "editor.findPrevious",
+    "editor.replaceAll",
     "edit.undo",
     "edit.redo",
     "file.save",
@@ -157,6 +166,10 @@ pub struct EditorView {
     /// A mouse drag extends the primary range.
     dragging: bool,
     layout: Option<Layout>,
+    /// The find/replace bar, its focus, and a focus request from a command.
+    find: Option<FindBar>,
+    find_focus: FocusHandle,
+    focus_find: bool,
     /// Text for the status bar after a failed action (e.g. a read-only file).
     pub message: Option<String>,
 }
@@ -201,6 +214,9 @@ impl EditorView {
             copied: None,
             dragging: false,
             layout: None,
+            find: None,
+            find_focus: cx.focus_handle(),
+            focus_find: false,
             message: None,
         };
         view.follow_changes(cx);
@@ -319,6 +335,7 @@ impl EditorView {
         };
         self.carets_from_next_change = false;
         self.load(snapshot);
+        self.refresh_matches();
         self.selection = selection.clamp(self.rope.len_chars());
         self.reveal();
         cx.notify();
@@ -346,6 +363,7 @@ impl EditorView {
                     self.load(snapshot);
                     self.selection = edit.selection.clamp(self.rope.len_chars());
                     self.message = None;
+                    self.refresh_matches();
                 }
                 Err(error) => self.message = Some(error.to_string()),
             },
@@ -509,6 +527,15 @@ impl EditorView {
                 self.map.set_config(&rope, config);
                 self.scroll.x = px(0.0);
             }
+            "editor.find" => self.open_find(false, None),
+            "editor.replace" => self.open_find(true, None),
+            "editor.findNext" | "editor.findPrevious" => {
+                if self.find.is_none() {
+                    self.open_find(false, None);
+                }
+                self.find_next(command == "editor.findNext");
+            }
+            "editor.replaceAll" => self.replace_all(cx),
             "edit.undo" | "edit.redo" => {
                 self.carets_from_next_change = true;
                 let documents = self.core.documents();
@@ -567,6 +594,332 @@ impl EditorView {
             config.wrap = Some(self.wrap_columns());
             self.map.set_config(&self.rope, config);
         }
+    }
+
+    // ---- find and replace -----------------------------------------------------------------
+
+    /// Opens the bar (Ctrl+F, Ctrl+R) with the selected text, or focuses it again.
+    fn open_find(&mut self, replacing: bool, window: Option<&mut Window>) {
+        let primary = self.selection.primary();
+        let selected = (!primary.is_empty() && primary.end() - primary.start() < 200)
+            .then(|| self.rope.slice(primary.start()..primary.end()).to_string())
+            .filter(|t| !t.contains('\n'));
+        match &mut self.find {
+            Some(bar) => {
+                bar.replacing |= replacing;
+                if let Some(text) = selected {
+                    bar.find = Field::with(&text);
+                }
+                bar.focus = Focus::Find;
+            }
+            None => {
+                let text = selected.unwrap_or_default();
+                self.find = Some(FindBar::new(&text, replacing));
+            }
+        }
+        self.refresh_matches();
+        if let Some(window) = window {
+            window.focus(&self.find_focus);
+        } else {
+            self.focus_find = true;
+        }
+    }
+
+    /// Recomputes the matches after the query or the text changed.
+    fn refresh_matches(&mut self) {
+        let Some(bar) = &mut self.find else {
+            return;
+        };
+        bar.error = None;
+        bar.matches = match bar.query().compile() {
+            Ok(Some(regex)) => search::find_all(&self.rope, &regex),
+            Ok(None) => Vec::new(),
+            Err(error) => {
+                bar.error = Some(error);
+                Vec::new()
+            }
+        };
+        let primary = self.selection.primary();
+        bar.current = bar
+            .matches
+            .iter()
+            .position(|m| m.0 == primary.start() && m.1 == primary.end());
+    }
+
+    /// Selects the next (or previous) match from the caret, wrapping around.
+    fn find_next(&mut self, forward: bool) {
+        let Some(bar) = &mut self.find else {
+            return;
+        };
+        let primary = self.selection.primary();
+        if let Some(index) = search::next_match(&bar.matches, primary.start(), forward) {
+            let (start, end) = bar.matches[index];
+            bar.current = Some(index);
+            self.selection = Selection::single(Range::new(start, end));
+            self.reveal();
+        }
+    }
+
+    fn replace_current(&mut self, cx: &mut Context<Self>) {
+        let Some(bar) = &self.find else {
+            return;
+        };
+        let query = bar.query();
+        let Ok(Some(regex)) = query.compile() else {
+            return;
+        };
+        let primary = self.selection.primary();
+        let on_match = bar
+            .matches
+            .iter()
+            .any(|m| m.0 == primary.start() && m.1 == primary.end());
+        if !on_match {
+            self.find_next(true);
+            cx.notify();
+            return;
+        }
+        let edit = search::replace_one(
+            &self.rope,
+            &query,
+            &regex,
+            (primary.start(), primary.end()),
+            &bar.replace.text,
+        );
+        self.commit(edit, cx);
+        self.refresh_matches();
+        self.find_next(true);
+    }
+
+    fn replace_all(&mut self, cx: &mut Context<Self>) {
+        let Some(bar) = &self.find else {
+            return;
+        };
+        let query = bar.query();
+        let Ok(Some(regex)) = query.compile() else {
+            return;
+        };
+        let edit = search::replace_all(&self.rope, &query, &regex, &bar.replace.text);
+        if !edit.is_empty() {
+            self.commit(edit, cx);
+            self.refresh_matches();
+        }
+    }
+
+    fn close_find(&mut self, window: &mut Window) {
+        self.find = None;
+        window.focus(&self.focus);
+    }
+
+    /// Keys in the bar: typing, Enter / Shift+Enter (next / previous), Tab between the
+    /// fields, the Alt toggles, Escape.
+    fn find_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let stroke = &event.keystroke;
+        let modifiers = stroke.modifiers;
+        let key = stroke.key.as_str();
+        let Some(bar) = &mut self.find else {
+            return;
+        };
+        let mut changed = false;
+        match (key, modifiers.alt, modifiers.shift) {
+            ("escape", _, _) => {
+                self.close_find(window);
+                cx.stop_propagation();
+                cx.notify();
+                return;
+            }
+            ("enter", _, shift) | ("f3", _, shift) => {
+                if key == "enter" && bar.focus == Focus::Replace && !shift {
+                    cx.stop_propagation();
+                    self.replace_current(cx);
+                    cx.notify();
+                    return;
+                }
+                cx.stop_propagation();
+                self.find_next(!shift);
+                cx.notify();
+                return;
+            }
+            ("tab", _, _) if bar.replacing => {
+                bar.focus = match bar.focus {
+                    Focus::Find => Focus::Replace,
+                    Focus::Replace => Focus::Find,
+                };
+            }
+            ("c", true, _) => {
+                bar.case_sensitive = !bar.case_sensitive;
+                changed = true;
+            }
+            ("w", true, _) => {
+                bar.whole_word = !bar.whole_word;
+                changed = true;
+            }
+            ("x", true, _) => {
+                bar.regex = !bar.regex;
+                changed = true;
+            }
+            ("a", true, _) if bar.replacing => {
+                cx.stop_propagation();
+                self.replace_all(cx);
+                cx.notify();
+                return;
+            }
+            _ => {
+                if modifiers.control || modifiers.alt || modifiers.platform {
+                    return;
+                }
+                let editing = bar.focus;
+                changed =
+                    bar.field().key(key, stroke.key_char.as_deref()) && editing == Focus::Find;
+            }
+        }
+        cx.stop_propagation();
+        if changed {
+            self.refresh_matches();
+            // Typing jumps to the first match from the caret, as IntelliJ does.
+            let caret = self.selection.primary().start();
+            if let Some(bar) = &mut self.find
+                && let Some(index) = search::next_match(&bar.matches, caret.saturating_sub(1), true)
+            {
+                let (start, end) = bar.matches[index];
+                bar.current = Some(index);
+                self.selection = Selection::single(Range::new(start, end));
+                self.reveal();
+            }
+        }
+        cx.notify();
+    }
+
+    /// The bar: query (and replacement) field, toggles, match count.
+    fn render_find(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let bar = self.find.as_ref()?;
+        let style = &self.style;
+        let focused_bar = true;
+        let field = |field: &Field, focused: bool, placeholder: &str| {
+            let (before, after) = field.split();
+            div()
+                .flex_1()
+                .h(px(22.0))
+                .px_2()
+                .flex()
+                .items_center()
+                .bg(style.gutter_background)
+                .border_1()
+                .border_color(if focused {
+                    style.caret
+                } else {
+                    style.gutter_background
+                })
+                .whitespace_nowrap()
+                .overflow_hidden()
+                .child(before.to_owned())
+                .when(focused && focused_bar, |d| {
+                    d.child(div().w(px(1.0)).h(px(14.0)).bg(style.foreground))
+                })
+                .child(after.to_owned())
+                .when(field.text.is_empty(), |d| {
+                    d.child(
+                        div()
+                            .text_color(style.gutter_foreground)
+                            .child(placeholder.to_owned()),
+                    )
+                })
+        };
+        let toggle = |id: &'static str, label: &'static str, on: bool, flip: fn(&mut FindBar)| {
+            div()
+                .id(id)
+                .px_1()
+                .h(px(20.0))
+                .flex()
+                .items_center()
+                .text_color(if on {
+                    style.foreground
+                } else {
+                    style.gutter_foreground
+                })
+                .when(on, |d| d.bg(style.selection))
+                .on_click(cx.listener(move |view, _: &ClickEvent, window, cx| {
+                    if let Some(bar) = &mut view.find {
+                        flip(bar);
+                    }
+                    view.refresh_matches();
+                    window.focus(&view.find_focus);
+                    cx.notify();
+                }))
+                .child(label)
+        };
+        let count = match (&bar.error, bar.matches.len(), bar.current) {
+            (Some(error), _, _) => error.lines().last().unwrap_or("").to_owned(),
+            (None, 0, _) if !bar.find.text.is_empty() => "0 results".to_owned(),
+            (None, 0, _) => String::new(),
+            (None, n, Some(i)) => format!("{}/{n}", i + 1),
+            (None, n, None) => format!("{n} results"),
+        };
+        let find_row = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(field(&bar.find, bar.focus == Focus::Find, "Find"))
+            .child(toggle("case", "Aa", bar.case_sensitive, |b| {
+                b.case_sensitive = !b.case_sensitive
+            }))
+            .child(toggle("word", "W", bar.whole_word, |b| {
+                b.whole_word = !b.whole_word
+            }))
+            .child(toggle("regex", ".*", bar.regex, |b| b.regex = !b.regex))
+            .child(
+                div()
+                    .w(px(90.0))
+                    .text_color(style.gutter_foreground)
+                    .child(count),
+            );
+        let replace_row = bar.replacing.then(|| {
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(field(&bar.replace, bar.focus == Focus::Replace, "Replace"))
+                .child(
+                    div()
+                        .id("replace-one")
+                        .px_2()
+                        .text_color(style.foreground)
+                        .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
+                            view.replace_current(cx);
+                            cx.notify();
+                        }))
+                        .child("Replace"),
+                )
+                .child(
+                    div()
+                        .id("replace-all")
+                        .px_2()
+                        .text_color(style.foreground)
+                        .on_click(cx.listener(|view, _: &ClickEvent, _window, cx| {
+                            view.replace_all(cx);
+                            cx.notify();
+                        }))
+                        .child("Replace All"),
+                )
+        });
+        Some(
+            div()
+                .id("find-bar")
+                .track_focus(&self.find_focus)
+                .on_key_down(cx.listener(Self::find_key))
+                .flex_none()
+                .p_1()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .bg(style.gutter_background)
+                .border_b_1()
+                .border_color(style.line_highlight)
+                .text_color(style.foreground)
+                .text_size(px(13.0))
+                .child(find_row)
+                .children(replace_row)
+                .into_any_element(),
+        )
     }
 
     // ---- mouse ----------------------------------------------------------------------------
@@ -817,18 +1170,31 @@ impl EntityInputHandler for EditorView {
 }
 
 impl Render for EditorView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if std::mem::take(&mut self.focus_find) && self.find.is_some() {
+            window.focus(&self.find_focus);
+        }
+        let bar = self.render_find(cx);
         div()
             .id("editor")
             .key_context("Editor")
             .track_focus(&self.focus)
             .size_full()
-            .cursor_text()
-            .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
-            .on_mouse_move(cx.listener(Self::mouse_move))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
-            .on_scroll_wheel(cx.listener(Self::scroll_wheel))
-            .child(EditorElement { view: cx.entity() })
+            .flex()
+            .flex_col()
+            .children(bar)
+            .child(
+                div()
+                    .id("editor-text")
+                    .flex_1()
+                    .overflow_hidden()
+                    .cursor_text()
+                    .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
+                    .on_mouse_move(cx.listener(Self::mouse_move))
+                    .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
+                    .on_scroll_wheel(cx.listener(Self::scroll_wheel))
+                    .child(EditorElement { view: cx.entity() }),
+            )
     }
 }
 
@@ -1039,6 +1405,26 @@ impl Element for EditorElement {
                 gutter.push((x, shaped));
             }
             let left = text_left - scroll.x;
+            // Find matches under the selections.
+            if let Some(bar) = &view.find {
+                let from = bar.matches.partition_point(|m| m.1 <= row.start);
+                let left = text_left - scroll.x;
+                for &(start, end) in bar.matches[from..]
+                    .iter()
+                    .take_while(|m| m.0 < row.end.max(row.start + 1))
+                {
+                    let (a, b) = (start.max(row.start), end.min(row.end));
+                    if a < b {
+                        quads.push(fill(
+                            Bounds::from_corners(
+                                point(left + row_layout.x_for(a), top),
+                                point(left + row_layout.x_for(b), top + line_height),
+                            ),
+                            style.find_match,
+                        ));
+                    }
+                }
+            }
             for range in view.selection.ranges() {
                 let (start, end) = (range.start().max(row.start), range.end());
                 // A selection reaching past the row's end covers the line break too.

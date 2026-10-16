@@ -667,6 +667,7 @@ impl Workbench {
             line_highlight: p.line_highlight,
             selection: p.editor_selection,
             caret: p.caret,
+            find_match: p.find_match,
             syntax: p
                 .syntax
                 .iter()

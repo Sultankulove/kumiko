@@ -20,6 +20,7 @@ fn style(theme: &EditorTheme) -> EditorStyle {
         line_highlight: rgba(theme.line_highlight).into(),
         selection: rgba(theme.selection).into(),
         caret: rgba(theme.caret).into(),
+        find_match: rgba(theme.find_match).into(),
         syntax: theme
             .syntax
             .iter()

@@ -315,3 +315,23 @@ key = "escape"
 command = "editor.escape"
 when = "editorFocus"
 
+
+[[binding]]
+key = "ctrl+f"
+command = "editor.find"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+r"
+command = "editor.replace"
+when = "editorFocus"
+
+[[binding]]
+key = "f3"
+command = "editor.findNext"
+when = "editorFocus"
+
+[[binding]]
+key = "shift+f3"
+command = "editor.findPrevious"
+when = "editorFocus"

@@ -7,6 +7,7 @@
 pub mod carets;
 pub mod display;
 pub mod editing;
+pub mod find;
 pub mod movement;
 pub mod search;
 pub mod selection;

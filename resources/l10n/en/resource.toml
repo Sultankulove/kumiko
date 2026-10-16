@@ -7,6 +7,11 @@ version = "0.1.0"
 locale = "en"
 
 [strings]
+"command.editor.find" = "Find…"
+"command.editor.replace" = "Replace…"
+"command.editor.findNext" = "Find Next"
+"command.editor.findPrevious" = "Find Previous"
+"command.editor.replaceAll" = "Replace All"
 "command.editor.cursorLeft" = "Move Caret Left"
 "command.editor.cursorRight" = "Move Caret Right"
 "command.editor.cursorUp" = "Move Caret Up"

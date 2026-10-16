@@ -7,6 +7,11 @@ version = "0.1.0"
 locale = "ru"
 
 [strings]
+"command.editor.find" = "Найти…"
+"command.editor.replace" = "Заменить…"
+"command.editor.findNext" = "Найти далее"
+"command.editor.findPrevious" = "Найти назад"
+"command.editor.replaceAll" = "Заменить всё"
 "command.editor.cursorLeft" = "Каретка влево"
 "command.editor.cursorRight" = "Каретка вправо"
 "command.editor.cursorUp" = "Каретка вверх"

@@ -138,9 +138,9 @@ impl Server {
         }));
         if crash
             && self
-            .docs
-            .get(uri)
-            .is_some_and(|lines| lines.iter().any(|l| l.contains("CRASH")))
+                .docs
+                .get(uri)
+                .is_some_and(|lines| lines.iter().any(|l| l.contains("CRASH")))
         {
             std::process::exit(3);
         }

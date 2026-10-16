@@ -3428,6 +3428,7 @@ name = "kumiko"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "gpui",
  "kumiko-core",
  "kumiko-editor-view",
  "kumiko-terminal-view",
@@ -3529,10 +3530,12 @@ dependencies = [
 name = "kumiko-editor-view"
 version = "0.1.0"
 dependencies = [
+ "gpui",
  "kumiko-core",
  "kumiko-types",
  "regex",
  "ropey",
+ "tokio",
  "unicode-segmentation",
  "unicode-width",
 ]

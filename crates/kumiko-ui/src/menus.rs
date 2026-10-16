@@ -30,6 +30,8 @@ const MAIN_MENUS: &[(&str, &str, &[Option<&str>])] = &[
             Some("workbench.splitRight"),
             Some("workbench.splitDown"),
             Some("workbench.unsplit"),
+            None,
+            Some("editor.toggleSoftWrap"),
         ],
     ),
     (

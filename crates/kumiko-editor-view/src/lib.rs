@@ -11,3 +11,4 @@ pub mod movement;
 pub mod search;
 pub mod selection;
 pub mod text;
+pub mod view;

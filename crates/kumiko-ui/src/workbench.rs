@@ -81,6 +81,8 @@ enum FocusTarget {
 struct OpenFile {
     doc: DocumentId,
     format: String,
+    /// Unsaved changes, shown on the tab.
+    dirty: bool,
 }
 
 pub struct Workbench {
@@ -371,6 +373,8 @@ impl Workbench {
             "workspace.folderRemoved",
             "config.*",
             "plugin.*",
+            "document.changed",
+            "document.saved",
         ];
         let mut events = core.events().subscribe(EventFilter::topics(topics));
         cx.spawn(async move |this, cx| {
@@ -401,7 +405,9 @@ impl Workbench {
                 return;
             }
         };
-        if event.topic.starts_with("config.") || event.topic.starts_with("plugin.") {
+        if event.topic.starts_with("document.") {
+            self.refresh_dirty(cx);
+        } else if event.topic.starts_with("config.") || event.topic.starts_with("plugin.") {
             if event.topic.starts_with("config.") {
                 self.reload_settings(cx);
             }
@@ -424,6 +430,23 @@ impl Workbench {
             }
         } else {
             self.refresh_roots(cx);
+        }
+    }
+
+    /// Brings the tabs' unsaved markers up to date with the documents.
+    fn refresh_dirty(&mut self, cx: &mut Context<Self>) {
+        let mut changed = false;
+        for file in self.files.values_mut() {
+            let dirty = self
+                .core
+                .documents()
+                .snapshot(file.doc)
+                .is_ok_and(|s| s.dirty);
+            changed |= dirty != file.dirty;
+            file.dirty = dirty;
+        }
+        if changed {
+            cx.notify();
         }
     }
 
@@ -1437,18 +1460,6 @@ impl Workbench {
 
 impl OpenFile {
     fn new(snapshot: &Snapshot) -> Self {
-        let mut lines: Vec<SharedString> = snapshot
-            .text
-            .lines()
-            .map(|line| {
-                let text = line.to_string();
-                SharedString::from(text.trim_end_matches(['\n', '\r']).to_owned())
-            })
-            .collect();
-        // A trailing newline yields an empty last line; editors do not show it as a line.
-        if lines.len() > 1 && lines.last().is_some_and(|l| l.is_empty()) {
-            lines.pop();
-        }
         let encoding = match snapshot.format.encoding {
             Encoding::Utf8 => "UTF-8",
             Encoding::Utf8Bom => "UTF-8 BOM",
@@ -1463,6 +1474,7 @@ impl OpenFile {
         Self {
             doc: snapshot.id,
             format: format!("{ending}   {encoding}"),
+            dirty: snapshot.dirty,
         }
     }
 }
@@ -2273,7 +2285,12 @@ impl Workbench {
                     this.save_state();
                     cx.notify();
                 }))
-                .child(tab.title.clone())
+                // "*Name" for unsaved changes, as IntelliJ's "Mark modified" does.
+                .child(if self.files.get(&tab.uri).is_some_and(|f| f.dirty) {
+                    format!("*{}", tab.title)
+                } else {
+                    tab.title.clone()
+                })
                 .child(
                     div()
                         .id(("close", g * 10_000 + i))

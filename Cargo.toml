@@ -78,8 +78,8 @@ toml_edit = "0.25.15"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi", "std"] }
 anyhow = "1.0.104"
-wasmtime = "49.0.0"
-wasmtime-wasi = "49.0.0"
+wasmtime = "49.0.3"
+wasmtime-wasi = "49.0.3"
 wit-bindgen = "0.62.0"
 wit-parser = "0.259.0"
 # UI (ADR-003): GPUI pinned exactly, used only by L1 UI crates; AccessKit attached from outside.

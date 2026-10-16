@@ -11,7 +11,11 @@ use crate::fixtures;
 fn build_grammar() {
     fixtures::build(
         "kumiko-grammar-java",
-        if cfg!(debug_assertions) { &[] } else { &["--release"] },
+        if cfg!(debug_assertions) {
+            &[]
+        } else {
+            &["--release"]
+        },
         "kumiko_grammar_java",
         std::env::consts::DLL_EXTENSION,
     );
@@ -135,7 +139,9 @@ async fn a_large_file_opens_and_rehighlights_within_budget() {
     }
     keys.sort();
     let p95 = keys[keys.len() * 95 / 100];
-    eprintln!("budget: open 5000 lines to highlights {open:?}, keystroke to highlights p95 {p95:?}");
+    eprintln!(
+        "budget: open 5000 lines to highlights {open:?}, keystroke to highlights p95 {p95:?}"
+    );
     if !cfg!(debug_assertions) {
         assert!(open < Duration::from_millis(50), "open {open:?}");
         assert!(p95 < Duration::from_millis(8), "keystroke p95 {p95:?}");

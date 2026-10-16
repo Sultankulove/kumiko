@@ -104,3 +104,5 @@
 - Lapce: https://github.com/lapce/lapce, репозиторий lapce/floem.
 - Helix: https://github.com/helix-editor/helix, каталог `runtime/queries/`.
 - xi-editor: https://github.com/xi-editor/xi-editor, ретроспектива R. Levien (2020).
+
+Перед E8 код редакторов Helix, Floem и Lapce и пример ввода GPUI разобраны подробнее: [editor-prior-art.md](editor-prior-art.md).

@@ -17,3 +17,4 @@ kumiko-types.workspace = true
 ropey.workspace = true
 unicode-segmentation.workspace = true
 unicode-width.workspace = true
+regex.workspace = true

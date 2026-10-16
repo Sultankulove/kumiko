@@ -4,8 +4,10 @@
 //!
 //! What was taken from other editors and why: docs/research/editor-prior-art.md.
 
+pub mod carets;
 pub mod display;
 pub mod editing;
 pub mod movement;
+pub mod search;
 pub mod selection;
 pub mod text;

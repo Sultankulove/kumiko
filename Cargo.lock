@@ -3531,6 +3531,7 @@ version = "0.1.0"
 dependencies = [
  "kumiko-core",
  "kumiko-types",
+ "regex",
  "ropey",
  "unicode-segmentation",
  "unicode-width",

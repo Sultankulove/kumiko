@@ -41,3 +41,13 @@ version = "1.2.0"
 interface = "kumiko.echo.api"
 version = "^1"
 optional = true
+
+# A language served by the fake language server of tests/fixtures (Language service tests).
+[[contributes.languages]]
+id = "fakelang"
+extensions = [".fake"]
+
+[[contributes.languageServers]]
+id = "fake"
+languages = ["fakelang"]
+launch = "dynamic"

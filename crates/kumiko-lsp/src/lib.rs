@@ -3,8 +3,18 @@
 //! sees LSP itself.
 
 pub mod client;
+mod convert;
 pub mod encoding;
+mod service;
 pub mod transport;
+pub mod types;
 
 pub use client::{Client, LspError, ResponseError, ServerHandler};
 pub use encoding::Encoding;
+pub use service::{
+    LanguageHost, LanguageService, MAX_RESTARTS, ServerDecl, ServerKey, ServerStatus,
+};
+pub use types::{
+    CodeAction, CompletionItem, CompletionKind, Diagnostic, Hover, Location, Severity,
+    WorkspaceEdit,
+};

@@ -31,6 +31,7 @@ use kumiko_protocol::methods::command::{ExecuteCommand, InvokeCommand, SetContex
 use kumiko_protocol::methods::lifecycle::{
     Exit, HostCapabilities, Initialize, InitializeParams, Initialized, Shutdown, WorkspaceInfo,
 };
+use kumiko_protocol::methods::lsp::{LaunchSpec, ResolveLaunch, ResolveLaunchParams};
 use kumiko_protocol::methods::service::{
     ServiceCall, ServiceCallParams, ServiceInvoke, ServiceInvokeParams,
 };
@@ -484,6 +485,17 @@ impl PluginHost {
     ) -> Result<Value, ResponseError> {
         let connection = self.ensure_running(plugin).await?;
         connection.request::<InvokeCommand>(&call).await
+    }
+
+    /// Asks the plugin how to start one of its language servers (`lsp/resolveLaunch`),
+    /// starting the plugin if needed.
+    pub async fn resolve_launch(
+        &self,
+        plugin: &PluginId,
+        params: ResolveLaunchParams,
+    ) -> Result<LaunchSpec, ResponseError> {
+        let connection = self.ensure_running(plugin).await?;
+        connection.request::<ResolveLaunch>(&params).await
     }
 
     /// Starts the plugin unless it runs already; waits for the handshake.

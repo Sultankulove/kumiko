@@ -17,6 +17,7 @@ pub use kumiko_config as config;
 pub use kumiko_documents as documents;
 pub use kumiko_events as events;
 pub use kumiko_fs as fs;
+pub use kumiko_lsp as language;
 pub use kumiko_plugin_host as plugin_host;
 pub use kumiko_project as project;
 pub use kumiko_protocol as protocol;
@@ -46,8 +47,11 @@ use kumiko_types::paths::workspace_settings_dir;
 use kumiko_types::{KumikoDirs, PluginId};
 use kumiko_wasm_host::{WasmConfig, WasmEngine};
 
+mod language_host;
 pub mod output;
 mod plugins;
+
+pub use language_host::LANGUAGE_CHANNEL;
 
 /// Settings the core itself reacts to.
 const WATCHER_EXCLUDE: &str = "files.watcherExclude";
@@ -116,6 +120,7 @@ struct Inner {
     resources: Arc<ResourceRegistry>,
     files: Arc<FileIndex>,
     syntax: Arc<SyntaxService>,
+    language: kumiko_lsp::LanguageService,
     reindex: Arc<tokio::sync::Notify>,
     plugins: plugins::PluginManager,
     tasks: Mutex<Vec<JoinHandle<()>>>,
@@ -239,8 +244,10 @@ impl CoreApi {
         let plugins =
             plugins::PluginManager::start(&options.dirs, services, options.plugins.clone(), wasm);
 
+        let processes: Arc<dyn kumiko_service_api::Processes> =
+            Arc::new(kumiko_process::ProcessService::new());
         let core = Self {
-            inner: Arc::new(Inner {
+            inner: Arc::new_cyclic(|weak| Inner {
                 options,
                 events,
                 commands,
@@ -252,6 +259,10 @@ impl CoreApi {
                 resources,
                 files: Arc::new(FileIndex::new()),
                 syntax,
+                language: kumiko_lsp::LanguageService::new(
+                    processes,
+                    Arc::new(language_host::Host { core: weak.clone() }),
+                ),
                 reindex: Arc::new(tokio::sync::Notify::new()),
                 plugins,
                 tasks: Mutex::default(),
@@ -259,6 +270,12 @@ impl CoreApi {
         };
         core.spawn_wiring();
         core.spawn_indexer();
+        let wiring = language_host::spawn_wiring(&core);
+        core.inner
+            .tasks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(wiring);
         Ok(core)
     }
 
@@ -415,13 +432,67 @@ impl CoreApi {
         &self.inner.syntax
     }
 
-    /// The document's language: the one it was opened with, else by its file extension.
+    /// The Language service (language servers: diagnostics, completion, navigation, fixes).
+    pub fn language(&self) -> &kumiko_lsp::LanguageService {
+        &self.inner.language
+    }
+
+    /// The document's language: the one it was opened with, else by its file extension (a
+    /// grammar package, then languages contributed by plugins).
     pub fn language_of(&self, document: DocumentId) -> Option<String> {
         let snapshot = self.inner.documents.snapshot(document).ok()?;
         snapshot.language_id.clone().or_else(|| {
             let path = snapshot.uri.to_file_path()?;
-            self.inner.syntax.language_for_path(&path)
+            self.inner.syntax.language_for_path(&path).or_else(|| {
+                let extension = format!(".{}", path.extension()?.to_str()?);
+                self.plugins()
+                    .entries()
+                    .filter(|e| e.is_ready())
+                    .flat_map(|e| e.manifest().contributes.languages.iter())
+                    .find(|l| {
+                        l.extensions
+                            .iter()
+                            .any(|x| x.eq_ignore_ascii_case(&extension))
+                    })
+                    .map(|l| l.id.clone())
+            })
         })
+    }
+
+    /// Applies edits across files (code actions, refactorings): an open document gets the
+    /// edit as an unsaved change, a file that is not open is changed and saved.
+    pub async fn apply_workspace_edit(
+        &self,
+        edit: &kumiko_lsp::WorkspaceEdit,
+    ) -> Result<(), String> {
+        let documents = &self.inner.documents;
+        let mut failed = Vec::new();
+        for (uri, edits) in &edit.changes {
+            if edits.is_empty() {
+                continue;
+            }
+            let was_open = documents.find(uri).is_some();
+            let snapshot = match documents.open(uri, None).await {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    failed.push(format!("{uri}: {error}"));
+                    continue;
+                }
+            };
+            if let Err(error) = documents.apply(snapshot.id, snapshot.version, edits.clone()) {
+                failed.push(format!("{uri}: {error}"));
+            } else if !was_open && let Err(error) = documents.save(snapshot.id).await {
+                failed.push(format!("{uri}: {error}"));
+            }
+            if !was_open {
+                let _ = documents.close(snapshot.id);
+            }
+        }
+        if failed.is_empty() {
+            Ok(())
+        } else {
+            Err(failed.join("; "))
+        }
     }
 
     /// Brings the document's syntax tree to its current version (incrementally when the
@@ -568,6 +639,7 @@ impl CoreApi {
 
     /// Stops plugins gracefully; call before dropping the last handle when the IDE exits.
     pub async fn shutdown(&self) {
+        self.inner.language.shutdown().await;
         self.inner.plugins.host().stop_all().await;
     }
 }

@@ -200,6 +200,21 @@
         }
       ]
     },
+    "DiagnosticsChanged": {
+      "properties": {
+        "uris": {
+          "description": "Files whose merged diagnostics changed; read them from the Language service.",
+          "items": {
+            "$ref": "#/$defs/Uri"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "uris"
+      ],
+      "type": "object"
+    },
     "DirEntry": {
       "properties": {
         "kind": {
@@ -2142,6 +2157,13 @@
       "description": "A provider of an inter-plugin interface appeared or disappeared.",
       "payload": {
         "$ref": "#/$defs/InterfaceAvailabilityChanged"
+      }
+    },
+    "language.diagnosticsChanged": {
+      "class": "state",
+      "description": "Diagnostics of these files changed.",
+      "payload": {
+        "$ref": "#/$defs/DiagnosticsChanged"
       }
     },
     "plugin.stateChanged": {

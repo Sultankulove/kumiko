@@ -8,6 +8,7 @@ members = [
     "plugins/*",
     "resources/grammars/*/parser",
     "tests",
+    "tests/fixtures/*",
 ]
 # Examples in other languages than Rust are not crates.
 exclude = ["sdk/examples/hello-c"]

@@ -87,7 +87,9 @@ const FORBIDDEN_WORDS: &[&str] = &["java", "maven", "gradle", "git"];
 fn classify(name: &str, rel_path: &str) -> Option<Layer> {
     // Grammar parsers under resources/ are built artifacts of L3 packages: like plugins they
     // may not use the core.
+    // Test fixtures (a fake language server) stand where plugins and external tools do.
     if rel_path.starts_with("plugins/")
+        || rel_path.starts_with("tests/fixtures/")
         || rel_path.starts_with("sdk/examples/")
         || rel_path.starts_with("resources/")
     {

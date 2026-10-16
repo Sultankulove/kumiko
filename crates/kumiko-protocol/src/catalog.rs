@@ -171,6 +171,7 @@ pub fn core_events() -> Vec<EventInfo> {
         ev::<events::TaskFinished>(),
         ev::<events::ConfigChanged>(),
         ev::<events::InterfaceAvailabilityChanged>(),
+        ev::<events::DiagnosticsChanged>(),
     ]
 }
 

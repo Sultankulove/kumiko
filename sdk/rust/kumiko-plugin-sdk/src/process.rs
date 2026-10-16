@@ -32,6 +32,7 @@ use kumiko_protocol::methods::command::{
 use kumiko_protocol::methods::lifecycle::{
     Exit, Initialize, InitializeParams, InitializeResult, Initialized, PluginCapabilities, Shutdown,
 };
+use kumiko_protocol::methods::lsp::{LaunchSpec, ResolveLaunch, ResolveLaunchParams};
 use kumiko_protocol::methods::service::{ServiceCall, ServiceCallParams, ServiceInvoke};
 use kumiko_protocol::{ErrorCode, ResponseError};
 use kumiko_types::{CommandId, InterfaceId, PluginId};
@@ -40,6 +41,8 @@ type CommandFuture = Pin<Box<dyn Future<Output = Result<Value, ResponseError>> +
 type CommandFn = Arc<dyn Fn(Context, Vec<Value>) -> CommandFuture + Send + Sync>;
 type InterfaceFn = Arc<dyn Fn(Context, PluginId, Value) -> CommandFuture + Send + Sync>;
 type Interfaces = HashMap<(String, String), InterfaceFn>;
+type LaunchFuture = Pin<Box<dyn Future<Output = Result<LaunchSpec, ResponseError>> + Send>>;
+type LaunchFn = Arc<dyn Fn(Context, ResolveLaunchParams) -> LaunchFuture + Send + Sync>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SdkError {
@@ -112,6 +115,7 @@ impl Context {
 pub struct Plugin {
     commands: HashMap<String, CommandFn>,
     interfaces: Interfaces,
+    launchers: HashMap<String, LaunchFn>,
     capabilities: PluginCapabilities,
 }
 
@@ -156,6 +160,18 @@ impl Plugin {
         self
     }
 
+    /// Tells the host how to start a language server of `[[contributes.languageServers]]`
+    /// (`lsp/resolveLaunch`, spec section 18). The host starts and talks to the server itself.
+    pub fn language_server<F, Fut>(mut self, server_id: &str, handler: F) -> Self
+    where
+        F: Fn(Context, ResolveLaunchParams) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<LaunchSpec, ResponseError>> + Send + 'static,
+    {
+        let handler: LaunchFn = Arc::new(move |ctx, params| Box::pin(handler(ctx, params)));
+        self.launchers.insert(server_id.to_owned(), handler);
+        self
+    }
+
     /// Declares optional host-to-plugin methods the plugin handles.
     pub fn capabilities(mut self, capabilities: PluginCapabilities) -> Self {
         self.capabilities = capabilities;
@@ -179,10 +195,18 @@ impl Plugin {
         });
         let commands = Arc::new(self.commands);
         let interfaces = Arc::new(self.interfaces);
+        let launchers = Arc::new(self.launchers);
         let capabilities = self.capabilities;
         let router_state = state.clone();
         let peer = Peer::spawn(reader, writer, PeerConfig::default(), move |peer| {
-            router(peer, router_state, commands, interfaces, capabilities)
+            router(
+                peer,
+                router_state,
+                commands,
+                interfaces,
+                launchers,
+                capabilities,
+            )
         });
         tokio::select! {
             () = state.exit.notified() => Ok(()),
@@ -196,12 +220,15 @@ fn router(
     state: Arc<State>,
     commands: Arc<HashMap<String, CommandFn>>,
     interfaces: Arc<Interfaces>,
+    launchers: Arc<HashMap<String, LaunchFn>>,
     capabilities: PluginCapabilities,
 ) -> Router {
     let init_state = state.clone();
     let invoke_state = state.clone();
     let service_state = state.clone();
     let service_peer = peer.clone();
+    let launch_state = state.clone();
+    let launch_peer = peer.clone();
     Router::new()
         .on_request::<Initialize, _, _>(move |params| {
             let result = if crate::version::compatible(&params.api_version, PROTOCOL_VERSION) {
@@ -261,6 +288,29 @@ fn router(
                     ));
                 };
                 handler(Context { peer, init }, call.caller, call.params).await
+            }
+        })
+        .on_request::<ResolveLaunch, _, _>(move |params: ResolveLaunchParams| {
+            let init = lock(&launch_state.init).clone();
+            let handler = launchers.get(&params.server_id).cloned();
+            let peer = launch_peer.clone();
+            async move {
+                let Some(init) = init else {
+                    return Err(ResponseError::new(
+                        ErrorCode::InvalidRequest,
+                        "not initialized",
+                    ));
+                };
+                let Some(handler) = handler else {
+                    return Err(ResponseError::new(
+                        ErrorCode::NotFound,
+                        format!(
+                            "language server `{}` is not handled by this plugin",
+                            params.server_id
+                        ),
+                    ));
+                };
+                handler(Context { peer, init }, params).await
             }
         })
         .on_request::<Shutdown, _, _>(|()| std::future::ready(Ok(())))

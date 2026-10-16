@@ -8,6 +8,7 @@ use std::pin::Pin;
 
 mod event;
 mod fs;
+mod process;
 pub mod wasm;
 pub mod when;
 
@@ -15,6 +16,9 @@ pub use event::{Event, EventSink};
 pub use fs::{FileSystem, FsError, WriteOptions};
 pub use kumiko_protocol::events::DeliveryClass;
 pub use kumiko_protocol::methods::fs::{DirEntry, FileKind, FileStat};
+pub use process::{
+    Output, ProcessControl, ProcessError, ProcessSpec, Processes, SpawnedProcess, Stdin,
+};
 
 /// Boxed future used by object-safe async trait methods.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;

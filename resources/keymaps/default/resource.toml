@@ -355,3 +355,24 @@ when = "editorFocus"
 key = "ctrl+shift+="
 command = "editor.unfoldAll"
 when = "editorFocus"
+
+# Code insight, as in IntelliJ.
+[[binding]]
+key = "ctrl+space"
+command = "editor.complete"
+when = "editorFocus"
+
+[[binding]]
+key = "alt+enter"
+command = "editor.showIntentions"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+b"
+command = "editor.gotoDefinition"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+q"
+command = "editor.quickDocumentation"
+when = "editorFocus"

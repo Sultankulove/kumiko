@@ -3544,6 +3544,7 @@ dependencies = [
  "kumiko-types",
  "regex",
  "ropey",
+ "serde_json",
  "tokio",
  "unicode-segmentation",
  "unicode-width",

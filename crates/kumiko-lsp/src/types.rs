@@ -65,6 +65,23 @@ pub struct CompletionItem {
     pub(crate) data: Option<(crate::ServerKey, Value)>,
 }
 
+impl CompletionItem {
+    /// An item that inserts its label (for tests and providers without a server).
+    pub fn plain(label: &str) -> Self {
+        Self {
+            label: label.to_owned(),
+            kind: CompletionKind::Text,
+            detail: None,
+            insert_text: label.to_owned(),
+            edit: None,
+            additional_edits: Vec::new(),
+            sort_text: label.to_owned(),
+            filter_text: label.to_owned(),
+            data: None,
+        }
+    }
+}
+
 /// Edits across files, already in the IDE's positions.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct WorkspaceEdit {

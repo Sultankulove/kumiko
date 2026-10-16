@@ -9,16 +9,20 @@ use crate::fixtures;
 /// The parser library of `resources/grammars/java`, built next to the test binaries where
 /// the Syntax service looks for it in development builds.
 fn build_grammar() {
-    fixtures::build(
-        "kumiko-grammar-java",
-        if cfg!(debug_assertions) {
-            &[]
-        } else {
-            &["--release"]
-        },
-        "kumiko_grammar_java",
-        std::env::consts::DLL_EXTENSION,
-    );
+    // Once per run: on Windows a library another test has loaded cannot be rewritten.
+    static BUILT: std::sync::Once = std::sync::Once::new();
+    BUILT.call_once(|| {
+        fixtures::build(
+            "kumiko-grammar-java",
+            if cfg!(debug_assertions) {
+                &[]
+            } else {
+                &["--release"]
+            },
+            "kumiko_grammar_java",
+            std::env::consts::DLL_EXTENSION,
+        );
+    });
 }
 
 const SOURCE: &str = "public class Hello {\n    // greet\n    void greet() {\n        String s = \"hi\";\n    }\n}\n";

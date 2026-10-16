@@ -18,7 +18,7 @@ use gpui::{
 };
 use kumiko_core::CoreApi;
 use kumiko_core::events::{Delivery, EventFilter};
-use kumiko_core::protocol::events::DocumentChanged;
+use kumiko_core::protocol::events::{DiagnosticsChanged, DocumentChanged};
 use kumiko_types::{DocumentId, DocumentVersion, Uri};
 use ropey::Rope;
 use tokio::runtime::Handle;
@@ -28,9 +28,15 @@ use crate::display::{DisplayConfig, DisplayMap};
 use crate::editing::{self, Copied, Edit, Indent};
 use crate::find::{Field, FindBar, Focus};
 use crate::movement::{Motion, move_selection};
+use crate::popup::Popup;
 use crate::search;
 use crate::selection::{Assoc, Change, Range, Selection, map_position};
 use crate::text::{char_of, char_of_utf16, utf16_of};
+use kumiko_core::language::Severity;
+
+mod language;
+
+use language::Mark;
 
 /// Colours and font of the editor, from the theme and settings.
 #[derive(Debug, Clone)]
@@ -45,6 +51,12 @@ pub struct EditorStyle {
     pub caret: Hsla,
     /// Background of find matches.
     pub find_match: Hsla,
+    /// Wavy underlines of errors and warnings.
+    pub error: Hsla,
+    pub warning: Hsla,
+    /// Completion and intention popups.
+    pub popup_background: Hsla,
+    pub popup_selection: Hsla,
     /// Capture name, colour, bold, italic.
     pub syntax: Vec<(String, Hsla, bool, bool)>,
     pub font_family: SharedString,
@@ -110,6 +122,10 @@ pub const COMMANDS: &[&str] = &[
     "editor.unfold",
     "editor.foldAll",
     "editor.unfoldAll",
+    "editor.complete",
+    "editor.showIntentions",
+    "editor.gotoDefinition",
+    "editor.quickDocumentation",
     "edit.undo",
     "edit.redo",
     "file.save",
@@ -179,6 +195,9 @@ pub struct EditorView {
     find: Option<FindBar>,
     find_focus: FocusHandle,
     focus_find: bool,
+    /// Diagnostics of the Language service, moved by edits until the next report.
+    marks: Vec<Mark>,
+    popup: Option<Popup>,
     /// Text for the status bar after a failed action (e.g. a read-only file).
     pub message: Option<String>,
 }
@@ -201,7 +220,7 @@ impl EditorView {
             wrap: None,
         };
         let map = DisplayMap::new(&snapshot.text, config);
-        let view = Self {
+        let mut view = Self {
             core,
             runtime,
             doc: snapshot.id,
@@ -229,8 +248,11 @@ impl EditorView {
             find: None,
             find_focus: cx.focus_handle(),
             focus_find: false,
+            marks: Vec::new(),
+            popup: None,
             message: None,
         };
+        view.refresh_diagnostics();
         view.follow_changes(cx);
         view
     }
@@ -265,14 +287,18 @@ impl EditorView {
             .saturating_sub(1)
             .min(self.rope.len_lines().saturating_sub(1));
         self.selection = Selection::point(self.rope.line_to_char(line));
+        self.center_caret();
+        cx.notify();
+    }
+
+    /// Scrolls the caret into view, in the middle, as IntelliJ does after Go to Line.
+    fn center_caret(&mut self) {
         self.reveal();
         if let Some(layout) = &self.layout {
-            // Centre the line, as IntelliJ does after Go to Line.
             let half = f32::from(layout.bounds.size.height) / 2.0;
             let (row, _) = self.map.locate(&self.rope, self.selection.primary().head);
             self.scroll.y = px((row as f32 * self.style.line_height - half).max(0.0));
         }
-        cx.notify();
     }
 
     pub fn uri(&self) -> &Uri {
@@ -281,18 +307,33 @@ impl EditorView {
 
     /// Changes made elsewhere (another view, a plugin, a reload, undo) move the carets.
     fn follow_changes(&self, cx: &mut Context<Self>) {
-        let mut events = self
-            .core
-            .events()
-            .subscribe(EventFilter::topics(["document.changed"]));
+        let mut events = self.core.events().subscribe(EventFilter::topics([
+            "document.changed",
+            "language.diagnosticsChanged",
+        ]));
         let uri = self.uri.clone();
         cx.spawn(async move |this, cx| {
             while let Some(delivery) = events.recv().await {
                 let changed = match delivery {
-                    Delivery::Event(event) => match event.decode::<DocumentChanged>() {
-                        Some(Ok(changed)) if changed.uri == uri => Some(changed),
-                        _ => continue,
-                    },
+                    Delivery::Event(event) => {
+                        if let Some(Ok(diagnostics)) = event.decode::<DiagnosticsChanged>() {
+                            if diagnostics.uris.contains(&uri)
+                                && this
+                                    .update(cx, |view, cx| {
+                                        view.refresh_diagnostics();
+                                        cx.notify();
+                                    })
+                                    .is_err()
+                            {
+                                break;
+                            }
+                            continue;
+                        }
+                        match event.decode::<DocumentChanged>() {
+                            Some(Ok(changed)) if changed.uri == uri => Some(changed),
+                            _ => continue,
+                        }
+                    }
                     Delivery::Resync(_) => None,
                 };
                 if this
@@ -347,8 +388,14 @@ impl EditorView {
         };
         self.carets_from_next_change = false;
         match &changes {
-            Some(changes) => self.map_folds(changes),
-            None => self.folded.clear(),
+            Some(changes) => {
+                self.map_folds(changes);
+                self.map_marks(changes);
+            }
+            None => {
+                self.folded.clear();
+                self.refresh_diagnostics();
+            }
         }
         self.load(snapshot);
         self.apply_folds();
@@ -379,12 +426,14 @@ impl EditorView {
             Ok(_) => match self.core.documents().snapshot(self.doc) {
                 Ok(snapshot) => {
                     self.map_folds(&edit.changes);
+                    self.map_marks(&edit.changes);
                     self.load(snapshot);
                     self.apply_folds();
                     self.selection = edit.selection.clamp(self.rope.len_chars());
                     self.unfold_around_carets();
                     self.message = None;
                     self.refresh_matches();
+                    self.refilter();
                 }
                 Err(error) => self.message = Some(error.to_string()),
             },
@@ -439,12 +488,20 @@ impl EditorView {
     fn moved(&mut self, motion: Motion, extend: bool, cx: &mut Context<Self>) {
         self.selection = move_selection(&self.rope, &self.map, &self.selection, motion, extend);
         self.unfold_around_carets();
+        // Moving off the word closes completion; intentions belong to where they were asked.
+        self.refilter();
+        if matches!(self.popup, Some(Popup::Actions(_))) {
+            self.popup = None;
+        }
         self.reveal();
         cx.notify();
     }
 
     /// Runs an editor command; `false` if the id is not one of [`COMMANDS`].
     pub fn run(&mut self, command: &str, cx: &mut Context<Self>) -> bool {
+        if self.popup_command(command, cx) {
+            return true;
+        }
         let page = self.rows_per_page();
         let (motion, extend) = match command {
             "editor.cursorLeft" => (Some(Motion::Left), false),
@@ -594,7 +651,7 @@ impl EditorView {
                 })
                 .detach();
             }
-            _ => return false,
+            _ => return self.language_command(command, cx),
         }
         self.reveal();
         cx.notify();
@@ -1202,6 +1259,7 @@ impl EditorView {
             None => editing::insert(&self.selection, text),
         };
         self.commit(edit, cx);
+        self.after_typing(text, cx);
     }
 }
 
@@ -1346,6 +1404,7 @@ impl Render for EditorView {
             window.focus(&self.find_focus);
         }
         let bar = self.render_find(cx);
+        let popup = self.render_popup(cx);
         div()
             .id("editor")
             .key_context("Editor")
@@ -1366,6 +1425,7 @@ impl Render for EditorView {
                     .on_scroll_wheel(cx.listener(Self::scroll_wheel))
                     .child(EditorElement { view: cx.entity() }),
             )
+            .children(popup)
     }
 }
 
@@ -1497,6 +1557,17 @@ impl Element for EditorElement {
                 (range, token_style(&style.syntax, &h.capture))
             })
             .collect();
+        let mut marks: Vec<(StdRange<usize>, Hsla)> = view
+            .marks
+            .iter()
+            .filter(|m| m.range.end > visible_chars.start && m.range.start < visible_chars.end)
+            .filter_map(|m| match m.severity {
+                Severity::Error => Some((m.range.clone(), style.error)),
+                Severity::Warning => Some((m.range.clone(), style.warning)),
+                _ => None,
+            })
+            .collect();
+        marks.sort_by_key(|(range, color)| (*color == style.warning, range.start));
         let tab_width = view.map.config().tab_width;
 
         let mut rows = Vec::with_capacity(last_row.saturating_sub(first_row));
@@ -1525,7 +1596,14 @@ impl Element for EditorElement {
                 }
             }
             offsets.push(shown.len());
-            let mut runs = syntax_runs(&row, &offsets, &highlights, &text_font, style.foreground);
+            let mut runs = syntax_runs(
+                &row,
+                &offsets,
+                &highlights,
+                &marks,
+                &text_font,
+                style.foreground,
+            );
             if let Some(marked) = view.marked.as_ref()
                 && marked.start < row.end.max(row.start + 1)
                 && marked.end > row.start
@@ -1784,11 +1862,12 @@ fn syntax_runs(
     row: &crate::display::Row,
     offsets: &[usize],
     highlights: &[Painted],
+    marks: &[(StdRange<usize>, Hsla)],
     base: &gpui::Font,
     foreground: Hsla,
 ) -> Vec<TextRun> {
     let chars = row.end - row.start;
-    let mut styles: Vec<Option<(Hsla, bool, bool)>> = vec![None; chars];
+    let mut styles: Vec<(Option<TokenStyle>, Option<Hsla>)> = vec![(None, None); chars];
     for (range, token) in highlights {
         if token.is_none() || range.end <= row.start || range.start >= row.end {
             continue;
@@ -1796,10 +1875,21 @@ fn syntax_runs(
         let from = range.start.max(row.start) - row.start;
         let to = range.end.min(row.end) - row.start;
         for slot in &mut styles[from..to] {
-            *slot = *token;
+            slot.0 = *token;
         }
     }
-    let make = |len: usize, token: Option<(Hsla, bool, bool)>| {
+    // Diagnostics: wavy underlines, the most severe (first) on top.
+    for (range, color) in marks.iter().rev() {
+        if range.end <= row.start || range.start >= row.end {
+            continue;
+        }
+        let from = range.start.max(row.start) - row.start;
+        let to = range.end.min(row.end) - row.start;
+        for slot in &mut styles[from..to] {
+            slot.1 = Some(*color);
+        }
+    }
+    let make = |len: usize, (token, wavy): (Option<TokenStyle>, Option<Hsla>)| {
         let mut font = base.clone();
         let mut color = foreground;
         if let Some((c, bold, italic)) = token {
@@ -1816,7 +1906,11 @@ fn syntax_runs(
             font,
             color,
             background_color: None,
-            underline: None,
+            underline: wavy.map(|color| UnderlineStyle {
+                color: Some(color),
+                thickness: px(1.0),
+                wavy: true,
+            }),
             strikethrough: None,
         }
     };
@@ -1832,7 +1926,7 @@ fn syntax_runs(
         start = end;
     }
     if runs.is_empty() {
-        runs.push(make(0, None));
+        runs.push(make(0, (None, None)));
     }
     runs
 }

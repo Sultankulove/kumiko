@@ -95,6 +95,8 @@ pub struct Workbench {
     project_focus: FocusHandle,
     editor_focus: FocusHandle,
     focus_request: Option<FocusTarget>,
+    /// A position to show once the file's editor exists (Problems, Go to Declaration).
+    reveal: Option<(Uri, kumiko_types::Position)>,
     /// Focus flags last published as context keys.
     published_focus: Option<(bool, bool)>,
     /// Chords typed so far of a multi-key binding.
@@ -164,6 +166,7 @@ impl Workbench {
             project_focus: cx.focus_handle(),
             editor_focus: cx.focus_handle(),
             focus_request: Some(FocusTarget::Project),
+            reveal: None,
             published_focus: None,
             pending: Vec::new(),
             menus: Vec::new(),
@@ -237,7 +240,10 @@ impl Workbench {
     fn apply(&mut self, command: UiCommand, cx: &mut Context<Self>) {
         match command {
             UiCommand::Toggle(window) => self.toggle_tool_window(window),
-            UiCommand::OpenFile(uri) => self.open_file(uri, cx),
+            UiCommand::OpenFile(uri, position) => {
+                self.reveal = position.map(|p| (uri.clone(), p));
+                self.open_file(uri, cx)
+            }
             UiCommand::QuickOpen(mode) => self.open_quick(mode),
             UiCommand::SelectTheme => {
                 self.open_menu = None;
@@ -375,6 +381,7 @@ impl Workbench {
             "plugin.*",
             "document.changed",
             "document.saved",
+            "language.diagnosticsChanged",
         ];
         let mut events = core.events().subscribe(EventFilter::topics(topics));
         cx.spawn(async move |this, cx| {
@@ -407,6 +414,9 @@ impl Workbench {
         };
         if event.topic.starts_with("document.") {
             self.refresh_dirty(cx);
+        } else if event.topic == "language.diagnosticsChanged" {
+            self.refresh_problems();
+            cx.notify();
         } else if event.topic.starts_with("config.") || event.topic.starts_with("plugin.") {
             if event.topic.starts_with("config.") {
                 self.reload_settings(cx);
@@ -661,6 +671,20 @@ impl Workbench {
         }
     }
 
+    /// Shows the requested position once the active editor is the file's.
+    fn apply_reveal(&mut self, cx: &mut Context<Self>) {
+        let Some((uri, position)) = &self.reveal else {
+            return;
+        };
+        let Some(editor) = self.active_editor() else {
+            return;
+        };
+        if self.split.tabs().active().is_some_and(|t| &t.uri == uri) {
+            (editor.goto)(*position, cx);
+            self.reveal = None;
+        }
+    }
+
     /// The editor of the active group's active tab.
     fn active_editor(&self) -> Option<&EditorHandle> {
         let tab = self.split.tabs().active()?;
@@ -691,6 +715,10 @@ impl Workbench {
             selection: p.editor_selection,
             caret: p.caret,
             find_match: p.find_match,
+            error: p.error,
+            warning: p.warning,
+            popup: p.popup,
+            popup_selection: p.selection,
             syntax: p
                 .syntax
                 .iter()
@@ -1102,6 +1130,7 @@ impl Workbench {
                 },
                 message,
                 location,
+                position: None,
             });
         }
         for problem in self.core.resources().problems() {
@@ -1110,6 +1139,7 @@ impl Workbench {
                 source: name(&problem.path),
                 message: problem.message,
                 location: file(&problem.path),
+                position: None,
             });
         }
         let registry = self.core.plugins();
@@ -1119,6 +1149,7 @@ impl Workbench {
                 source: self.t("problems.plugins"),
                 message: message.clone(),
                 location: None,
+                position: None,
             });
         }
         let host = self.core.plugin_host();
@@ -1132,6 +1163,7 @@ impl Workbench {
                         source: id.to_string(),
                         message: reason.clone(),
                         location: manifest.clone(),
+                        position: None,
                     });
                 }
             }
@@ -1141,6 +1173,30 @@ impl Workbench {
                     source: id.to_string(),
                     message: host.reason(id).unwrap_or_else(|| self.t("problems.failed")),
                     location: None,
+                    position: None,
+                });
+            }
+        }
+        // Language servers: one group per file, "line:column message" as IntelliJ lists them.
+        for (uri, diagnostics) in self.core.language().all_diagnostics() {
+            let source = file_name(&uri);
+            for d in diagnostics {
+                let severity = match d.severity {
+                    kumiko_core::language::Severity::Error => Severity::Error,
+                    kumiko_core::language::Severity::Warning => Severity::Warning,
+                    _ => Severity::Info,
+                };
+                problems.push(Problem {
+                    severity,
+                    source: source.clone(),
+                    message: format!(
+                        "{}:{}  {}",
+                        d.range.start.line + 1,
+                        d.range.start.character + 1,
+                        d.message
+                    ),
+                    location: Some(uri.clone()),
+                    position: Some(d.range.start),
                 });
             }
         }
@@ -1541,6 +1597,7 @@ fn place(rect: Rect) -> gpui::Div {
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_editors(window, cx);
+        self.apply_reveal(cx);
         if self.shown
             && let Some(started) = self.started.take()
         {
@@ -1846,6 +1903,21 @@ impl Workbench {
                         .flex()
                         .items_center()
                         .gap_2()
+                        .when_some(
+                            problem.location.clone().zip(problem.position),
+                            |d, (uri, at)| {
+                                d.hover(|d| d.bg(rgba(p.hover))).on_click(cx.listener(
+                                    move |this, _: &ClickEvent, _window, cx| {
+                                        let args = vec![
+                                            Value::from(uri.as_str()),
+                                            Value::from(at.line),
+                                            Value::from(at.character),
+                                        ];
+                                        this.execute_id("workbench.openFile", args, cx);
+                                    },
+                                ))
+                            },
+                        )
                         .child(div().text_color(rgba(color)).child("●"))
                         .child(problem.message.clone())
                         .into_any_element(),

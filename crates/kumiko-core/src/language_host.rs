@@ -89,6 +89,12 @@ impl LanguageHost for Host {
         }
     }
 
+    fn document_version(&self, uri: &Uri) -> Option<u64> {
+        let core = self.core()?;
+        let id = core.inner.documents.find(uri)?;
+        core.inner.documents.snapshot(id).ok().map(|s| s.version.0)
+    }
+
     fn workspace_folders(&self) -> Vec<Uri> {
         self.core()
             .map(|core| {

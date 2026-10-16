@@ -15,6 +15,6 @@ pub use service::{
     LanguageHost, LanguageService, MAX_RESTARTS, ServerDecl, ServerKey, ServerStatus,
 };
 pub use types::{
-    CodeAction, CompletionItem, CompletionKind, Diagnostic, Hover, Location, Severity,
-    WorkspaceEdit,
+    CodeAction, CompletionItem, CompletionKind, Diagnostic, Highlight, Hover, Location, Severity,
+    SignatureHelp, Symbol, WorkspaceEdit,
 };

@@ -28,10 +28,14 @@ use crate::convert;
 use crate::encoding::{Encoding, range_from_lsp, range_to_lsp, to_lsp};
 use crate::types::{CodeAction, CompletionItem, Diagnostic, Hover, Location, WorkspaceEdit};
 
+mod navigation;
+
 /// Restarts of a crashing server before it stays stopped.
 pub const MAX_RESTARTS: u32 = 3;
 /// How long a request waits for a starting server.
 const START_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long a request waits for edits still on their way.
+const CATCH_UP: Duration = Duration::from_millis(500);
 
 /// A language server a plugin contributes (`[[contributes.languageServers]]`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +70,8 @@ pub trait LanguageHost: Send + Sync + 'static {
     /// A server's log line (`window/logMessage`, stderr).
     fn log(&self, server: &str, message: &str);
     fn workspace_folders(&self) -> Vec<Uri>;
+    /// The version an open document has now; the service may still be catching up with it.
+    fn document_version(&self, uri: &Uri) -> Option<u64>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -909,6 +915,7 @@ impl Shared {
         uri: &Uri,
         wanted: impl Fn(&lsp_types::ServerCapabilities) -> bool,
     ) -> Vec<(ServerKey, Arc<Running>)> {
+        self.catch_up(uri).await;
         let servers: Vec<Arc<Server>> = {
             let state = lock(&self.state);
             let Some(doc) = state.docs.get(uri) else {
@@ -943,6 +950,22 @@ impl Shared {
             }
         }
         ready
+    }
+
+    /// Waits (briefly) until the edits of the document have arrived as events, so a request
+    /// right after an edit is about the edited text.
+    async fn catch_up(&self, uri: &Uri) {
+        let Some(wanted) = self.host.document_version(uri).map(lsp_version) else {
+            return;
+        };
+        let deadline = tokio::time::Instant::now() + CATCH_UP;
+        loop {
+            let known = lock(&self.state).docs.get(uri).map(|d| d.version);
+            if known.is_none_or(|v| v >= wanted) || tokio::time::Instant::now() > deadline {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
     }
 
     fn with_doc<T>(&self, uri: &Uri, _server: &Running, f: impl FnOnce(&Doc) -> T) -> Option<T> {

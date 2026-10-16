@@ -45,6 +45,10 @@ struct Fixture {
 
 impl Fixture {
     async fn start() -> Self {
+        Self::start_with("src/a.fake", SOURCE).await
+    }
+
+    async fn start_with(file: &str, source: &str) -> Self {
         let ide = Headless::start_with(|options| {
             let source = plugin_source(options.dirs.data_dir());
             PluginStore::new(&options.dirs).install(&source).unwrap();
@@ -53,7 +57,7 @@ impl Fixture {
         .unwrap();
         let workspace = ide.workspace().to_path_buf();
         ide.core.open_folder(&workspace).await.unwrap();
-        let path = ide.write("src/a.fake", SOURCE).unwrap();
+        let path = ide.write(file, source).unwrap();
         let uri = Uri::from_file_path(kumiko_types::paths::canonicalize(&path).unwrap()).unwrap();
         let doc = ide.core.documents().open(&uri, None).await.unwrap().id;
         assert_eq!(ide.core.language_of(doc).as_deref(), Some("fakelang"));
@@ -240,4 +244,43 @@ async fn a_crashed_server_is_restarted_with_its_documents() {
     let hover = language.hover(&f.uri, Position::new(0, 1)).await.unwrap();
     assert_eq!(hover.contents, "**hello**");
     f.ide.core.shutdown().await;
+}
+
+const SHOP: &str = "class Shop\n  def total\n    count = 1   \n    count\nx = beta(1, \n";
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn navigation_and_refactoring() {
+    let f = Fixture::start_with("src/shop.fake", SHOP).await;
+    let language = f.ide.core.language();
+
+    let symbols = language.symbols(&f.uri).await;
+    let outline: Vec<(&str, &str, usize)> = symbols
+        .iter()
+        .map(|s| (s.name.as_str(), s.kind, s.depth))
+        .collect();
+    assert_eq!(outline, [("Shop", "class", 0), ("total", "method", 1)]);
+
+    let count = Position::new(2, 5);
+    let usages = language.references(&f.uri, count).await;
+    let lines: Vec<u32> = usages.iter().map(|l| l.range.start.line).collect();
+    assert_eq!(lines, [2, 3]);
+    let highlights = language.document_highlights(&f.uri, count).await;
+    assert_eq!(highlights.len(), 2);
+    assert!(highlights[0].write && !highlights[1].write);
+
+    let help = language
+        .signature_help(&f.uri, Position::new(4, 12))
+        .await
+        .unwrap();
+    assert_eq!(help.signatures, ["beta(int a, String b)"]);
+    assert_eq!(
+        help.active_parameter,
+        Some(12..20),
+        "the second, after one comma"
+    );
+
+    assert_eq!(language.rename(&f.uri, count, "amount").await, Ok(1));
+    assert_eq!(f.text().matches("amount").count(), 2, "{}", f.text());
+    language.format(&f.uri, 4, true).await.unwrap();
+    assert!(f.text().contains("    amount = 1\n"), "{:?}", f.text());
 }

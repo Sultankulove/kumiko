@@ -110,3 +110,33 @@ pub struct Hover {
     pub contents: String,
     pub range: Option<Range>,
 }
+
+/// A symbol of a document (File Structure, `@` in Quick Open), flattened with its depth.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Symbol {
+    pub name: String,
+    /// LSP symbol kind name in lower case: `class`, `method`, `field`, …
+    pub kind: &'static str,
+    pub detail: Option<String>,
+    /// The whole declaration and the name in it.
+    pub range: Range,
+    pub selection: Range,
+    /// 0 for top-level symbols.
+    pub depth: usize,
+}
+
+/// Parameter info of a call (Ctrl+P).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignatureHelp {
+    /// Signatures as the server labels them, the active one first.
+    pub signatures: Vec<String>,
+    /// Byte range of the active parameter in the first label.
+    pub active_parameter: Option<std::ops::Range<usize>>,
+}
+
+/// Occurrences of the symbol under the caret in its document, read or written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Highlight {
+    pub range: Range,
+    pub write: bool,
+}

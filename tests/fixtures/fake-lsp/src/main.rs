@@ -9,6 +9,11 @@
 //! - definition: the first occurrence of the word under the caret;
 //! - code actions: "Replace TODO with DONE" for each TODO diagnostic (edit on resolve), and
 //!   the command "Insert header", which the server carries out with `workspace/applyEdit`;
+//! - references, rename, document highlights: every occurrence of the word under the caret
+//!   (written when followed by ` =`);
+//! - formatting: trailing spaces removed;
+//! - document symbols: `class NAME` and `def NAME` lines, nested by indentation;
+//! - signature help: `beta(int a, String b)`, the parameter after as many commas as typed;
 //! - an edit leaving `CRASH` in a document makes the server exit with code 3.
 
 use std::collections::HashMap;
@@ -166,6 +171,82 @@ impl Server {
         Some((line_no, line, start, end))
     }
 
+    /// Every occurrence of the word under the caret (whole words), and whether it is written.
+    fn occurrences(&self, params: &Value) -> Option<Vec<(Value, bool)>> {
+        let uri = params["textDocument"]["uri"].as_str()?;
+        let (_, line, start, end) = self.word_at(params)?;
+        let word = &line[start..end];
+        if word.is_empty() {
+            return Some(Vec::new());
+        }
+        let is_word = |c: char| c.is_alphanumeric() || c == '_';
+        let mut found = Vec::new();
+        for (n, text) in self.docs.get(uri)?.iter().enumerate() {
+            for (byte, _) in text.match_indices(word) {
+                let before = text[..byte].chars().next_back().is_some_and(is_word);
+                let after = text[byte + word.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_word);
+                if before || after {
+                    continue;
+                }
+                let write = text[byte + word.len()..].trim_start().starts_with('=');
+                let range = json!({
+                    "start": self.position(n, text, byte),
+                    "end": self.position(n, text, byte + word.len()),
+                });
+                found.push((range, write));
+            }
+        }
+        Some(found)
+    }
+
+    /// `class NAME` and `def NAME` lines as nested symbols (two spaces per level).
+    fn symbols(&self, uri: &str) -> Option<Value> {
+        fn take(
+            lines: &[(usize, usize, String, &str)],
+            at: &mut usize,
+            depth: usize,
+        ) -> Vec<Value> {
+            let mut out = Vec::new();
+            while let Some((n, indent, name, kind)) = lines.get(*at) {
+                if *indent < depth {
+                    break;
+                }
+                *at += 1;
+                let children = take(lines, at, indent + 2);
+                let range = json!({"start": {"line": n, "character": 0}, "end": {"line": n, "character": 0}});
+                out.push(json!({
+                    "name": name,
+                    "kind": if *kind == "class" { 5 } else { 6 },
+                    "range": range,
+                    "selectionRange": range,
+                    "children": children,
+                }));
+            }
+            out
+        }
+        let lines: Vec<(usize, usize, String, &str)> = self
+            .docs
+            .get(uri)?
+            .iter()
+            .enumerate()
+            .filter_map(|(n, line)| {
+                let indent = line.len() - line.trim_start().len();
+                let rest = line.trim();
+                let (kind, name) = rest
+                    .strip_prefix("class ")
+                    .map(|r| ("class", r))
+                    .or_else(|| rest.strip_prefix("def ").map(|r| ("def", r)))?;
+                let name: String = name.chars().take_while(|c| c.is_alphanumeric()).collect();
+                Some((n, indent, name, kind))
+            })
+            .collect();
+        let mut at = 0;
+        Some(Value::Array(take(&lines, &mut at, 0)))
+    }
+
     fn request(&mut self, id: Value, method: &str, params: &Value) -> Option<Value> {
         let result = match method {
             "initialize" => json!({
@@ -177,10 +258,79 @@ impl Server {
                     "definitionProvider": true,
                     "codeActionProvider": {"resolveProvider": true},
                     "executeCommandProvider": {"commands": ["fake.insertHeader"]},
+                    "referencesProvider": true,
+                    "renameProvider": true,
+                    "documentFormattingProvider": true,
+                    "documentSymbolProvider": true,
+                    "documentHighlightProvider": true,
+                    "signatureHelpProvider": {"triggerCharacters": ["(", ","]},
                 },
                 "serverInfo": {"name": "fake-lsp"},
             }),
             "shutdown" => Value::Null,
+            "textDocument/references" => {
+                let uri = params["textDocument"]["uri"].as_str()?.to_owned();
+                let found: Vec<Value> = self
+                    .occurrences(params)?
+                    .into_iter()
+                    .map(|(range, _)| json!({"uri": uri, "range": range}))
+                    .collect();
+                Value::Array(found)
+            }
+            "textDocument/documentHighlight" => {
+                let found: Vec<Value> = self
+                    .occurrences(params)?
+                    .into_iter()
+                    .map(
+                        |(range, write)| json!({"range": range, "kind": if write { 3 } else { 2 }}),
+                    )
+                    .collect();
+                Value::Array(found)
+            }
+            "textDocument/rename" => {
+                let uri = params["textDocument"]["uri"].as_str()?.to_owned();
+                let new_name = params["newName"].as_str()?.to_owned();
+                let edits: Vec<Value> = self
+                    .occurrences(params)?
+                    .into_iter()
+                    .map(|(range, _)| json!({"range": range, "newText": new_name}))
+                    .collect();
+                json!({"changes": {uri: edits}})
+            }
+            "textDocument/formatting" => {
+                let uri = params["textDocument"]["uri"].as_str()?;
+                let mut edits = Vec::new();
+                for (n, line) in self.docs.get(uri)?.iter().enumerate() {
+                    let trimmed = line.trim_end_matches([' ', '\t']).len();
+                    if trimmed < line.len() {
+                        edits.push(json!({
+                            "range": {"start": self.position(n, line, trimmed), "end": self.position(n, line, line.len())},
+                            "newText": "",
+                        }));
+                    }
+                }
+                Value::Array(edits)
+            }
+            "textDocument/documentSymbol" => {
+                let uri = params["textDocument"]["uri"].as_str()?;
+                self.symbols(uri)?
+            }
+            "textDocument/signatureHelp" => {
+                let uri = params["textDocument"]["uri"].as_str()?;
+                let line_no = params["position"]["line"].as_u64()? as usize;
+                let line = self.docs.get(uri)?.get(line_no)?;
+                let at = self.byte(line, params["position"]["character"].as_u64()?);
+                let open = line[..at].rfind('(')?;
+                let commas = line[open..at].matches(',').count();
+                json!({
+                    "signatures": [{
+                        "label": "beta(int a, String b)",
+                        "parameters": [{"label": "int a"}, {"label": [12, 20]}],
+                    }],
+                    "activeSignature": 0,
+                    "activeParameter": commas,
+                })
+            }
             "textDocument/completion" => {
                 let (line_no, line, start, _) = self.word_at(params)?;
                 let at = self.byte(&line, params["position"]["character"].as_u64()?);

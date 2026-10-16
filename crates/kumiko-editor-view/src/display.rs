@@ -43,6 +43,9 @@ pub struct DisplayMap {
     first_row: Vec<usize>,
     /// Char offsets (within the line) where each line's continuation rows start.
     breaks: Vec<Vec<usize>>,
+    /// Folded regions as `(first line, last line)`: the lines between are hidden, the first
+    /// shows a placeholder, the last (the closing bracket) stays.
+    folded: Vec<(usize, usize)>,
 }
 
 impl DisplayMap {
@@ -51,6 +54,7 @@ impl DisplayMap {
             config,
             first_row: Vec::new(),
             breaks: Vec::new(),
+            folded: Vec::new(),
         };
         map.rebuild(rope);
         map
@@ -71,11 +75,35 @@ impl DisplayMap {
             .collect();
         self.first_row = Vec::with_capacity(lines + 1);
         let mut row = 0;
-        for breaks in &self.breaks {
+        for (line, breaks) in self.breaks.iter().enumerate() {
             self.first_row.push(row);
-            row += breaks.len() + 1;
+            if !self.is_hidden(line) {
+                row += breaks.len() + 1;
+            }
         }
         self.first_row.push(row);
+    }
+
+    /// Whether a line is inside a folded region.
+    pub fn is_hidden(&self, line: usize) -> bool {
+        self.folded
+            .iter()
+            .any(|&(start, end)| start < line && line < end)
+    }
+
+    pub fn folded(&self) -> &[(usize, usize)] {
+        &self.folded
+    }
+
+    /// Replaces the folded regions (each spanning at least three lines to hide one).
+    pub fn set_folded(&mut self, rope: &Rope, mut folded: Vec<(usize, usize)>) {
+        folded.retain(|&(start, end)| end > start + 1 && end < rope.len_lines());
+        folded.sort_unstable();
+        folded.dedup();
+        if folded != self.folded {
+            self.folded = folded;
+            self.rebuild(rope);
+        }
     }
 
     pub fn set_config(&mut self, rope: &Rope, config: DisplayConfig) {
@@ -234,5 +262,30 @@ mod tests {
         let map = DisplayMap::new(&rope, config);
         // The tab is whitespace: the row breaks after it rather than inside "ab".
         assert_eq!(rows(&rope, &map), ["日本", "語日", "本語", "\t", "ab"]);
+    }
+
+    #[test]
+    fn folded_lines_have_no_rows() {
+        let rope = Rope::from_str(
+            "class A {
+  a();
+  b();
+}
+next
+",
+        );
+        let mut map = DisplayMap::new(&rope, DisplayConfig::default());
+        map.set_folded(&rope, vec![(0, 3), (4, 4)]);
+        assert_eq!(map.folded(), [(0, 3)], "a region must hide a line");
+        assert_eq!(rows(&rope, &map), ["class A {", "}", "next", ""]);
+        assert!(map.is_hidden(1) && map.is_hidden(2) && !map.is_hidden(3));
+        assert_eq!(
+            map.row(&rope, 1).line,
+            3,
+            "the closing line follows the first"
+        );
+        assert_eq!(map.locate(&rope, 22).0, 1, "the closing brace on row 1");
+        map.set_folded(&rope, Vec::new());
+        assert_eq!(map.row_count(), 6);
     }
 }

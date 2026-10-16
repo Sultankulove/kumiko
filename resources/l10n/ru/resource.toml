@@ -7,6 +7,10 @@ version = "0.1.0"
 locale = "ru"
 
 [strings]
+"command.editor.fold" = "Свернуть"
+"command.editor.unfold" = "Развернуть"
+"command.editor.foldAll" = "Свернуть всё"
+"command.editor.unfoldAll" = "Развернуть всё"
 "command.editor.find" = "Найти…"
 "command.editor.replace" = "Заменить…"
 "command.editor.findNext" = "Найти далее"

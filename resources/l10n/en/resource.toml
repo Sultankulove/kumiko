@@ -7,6 +7,10 @@ version = "0.1.0"
 locale = "en"
 
 [strings]
+"command.editor.fold" = "Collapse"
+"command.editor.unfold" = "Expand"
+"command.editor.foldAll" = "Collapse All"
+"command.editor.unfoldAll" = "Expand All"
 "command.editor.find" = "Find…"
 "command.editor.replace" = "Replace…"
 "command.editor.findNext" = "Find Next"

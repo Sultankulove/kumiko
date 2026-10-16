@@ -106,6 +106,10 @@ pub const COMMANDS: &[&str] = &[
     "editor.findNext",
     "editor.findPrevious",
     "editor.replaceAll",
+    "editor.fold",
+    "editor.unfold",
+    "editor.foldAll",
+    "editor.unfoldAll",
     "edit.undo",
     "edit.redo",
     "file.save",
@@ -167,6 +171,11 @@ pub struct EditorView {
     dragging: bool,
     layout: Option<Layout>,
     /// The find/replace bar, its focus, and a focus request from a command.
+    /// Foldable regions (lines) of the version they were read for, and the folded ones
+    /// as `(first line start, last line start)` chars, which edits move.
+    regions: Vec<(usize, usize)>,
+    regions_version: Option<DocumentVersion>,
+    folded: Vec<(usize, usize)>,
     find: Option<FindBar>,
     find_focus: FocusHandle,
     focus_find: bool,
@@ -214,6 +223,9 @@ impl EditorView {
             copied: None,
             dragging: false,
             layout: None,
+            regions: Vec::new(),
+            regions_version: None,
+            folded: Vec::new(),
             find: None,
             find_focus: cx.focus_handle(),
             focus_find: false,
@@ -334,9 +346,15 @@ impl EditorView {
             (None, _) => self.selection.clamp(snapshot.text.len_chars()),
         };
         self.carets_from_next_change = false;
+        match &changes {
+            Some(changes) => self.map_folds(changes),
+            None => self.folded.clear(),
+        }
         self.load(snapshot);
+        self.apply_folds();
         self.refresh_matches();
         self.selection = selection.clamp(self.rope.len_chars());
+        self.unfold_around_carets();
         self.reveal();
         cx.notify();
     }
@@ -360,8 +378,11 @@ impl EditorView {
         match self.core.documents().apply(self.doc, self.version, edits) {
             Ok(_) => match self.core.documents().snapshot(self.doc) {
                 Ok(snapshot) => {
+                    self.map_folds(&edit.changes);
                     self.load(snapshot);
+                    self.apply_folds();
                     self.selection = edit.selection.clamp(self.rope.len_chars());
+                    self.unfold_around_carets();
                     self.message = None;
                     self.refresh_matches();
                 }
@@ -417,6 +438,7 @@ impl EditorView {
 
     fn moved(&mut self, motion: Motion, extend: bool, cx: &mut Context<Self>) {
         self.selection = move_selection(&self.rope, &self.map, &self.selection, motion, extend);
+        self.unfold_around_carets();
         self.reveal();
         cx.notify();
     }
@@ -536,6 +558,9 @@ impl EditorView {
                 self.find_next(command == "editor.findNext");
             }
             "editor.replaceAll" => self.replace_all(cx),
+            "editor.fold" | "editor.unfold" | "editor.foldAll" | "editor.unfoldAll" => {
+                self.fold_command(command)
+            }
             "edit.undo" | "edit.redo" => {
                 self.carets_from_next_change = true;
                 let documents = self.core.documents();
@@ -593,6 +618,139 @@ impl EditorView {
         if config.wrap.is_some() {
             config.wrap = Some(self.wrap_columns());
             self.map.set_config(&self.rope, config);
+        }
+    }
+
+    // ---- folding --------------------------------------------------------------------------
+
+    /// Foldable regions from the syntax tree, for the current version.
+    fn refresh_regions(&mut self) {
+        if self.regions_version != Some(self.version) {
+            self.regions = self.core.folds(self.doc);
+            self.regions_version = Some(self.version);
+        }
+    }
+
+    /// Applies the folded regions (kept as chars, so edits move them) to the display map.
+    fn apply_folds(&mut self) {
+        let lines: Vec<(usize, usize)> = self
+            .folded
+            .iter()
+            .map(|&(start, end)| {
+                (
+                    self.rope.char_to_line(start.min(self.rope.len_chars())),
+                    self.rope.char_to_line(end.min(self.rope.len_chars())),
+                )
+            })
+            .collect();
+        self.map.set_folded(&self.rope, lines);
+        // Keep only what the map accepted (a region that shrank below three lines unfolds).
+        let kept = self.map.folded().to_vec();
+        self.folded = kept
+            .iter()
+            .map(|&(a, b)| (self.rope.line_to_char(a), self.rope.line_to_char(b)))
+            .collect();
+    }
+
+    /// Moves folded regions through an edit.
+    fn map_folds(&mut self, changes: &[Change]) {
+        self.folded = self
+            .folded
+            .iter()
+            .map(|&(start, end)| {
+                (
+                    map_position(start, changes, Assoc::Before),
+                    map_position(end, changes, Assoc::Before),
+                )
+            })
+            .collect();
+    }
+
+    fn fold_line(&mut self, line: usize, fold: bool) {
+        let start = self.rope.line_to_char(line);
+        if fold {
+            if let Some(&(_, end)) = self.regions.iter().find(|r| r.0 == line)
+                && !self.folded.iter().any(|f| f.0 == start)
+            {
+                self.folded.push((start, self.rope.line_to_char(end)));
+            }
+        } else {
+            self.folded.retain(|f| f.0 != start);
+        }
+        self.apply_folds();
+    }
+
+    /// The innermost region around the caret's line (or starting on it).
+    fn region_at_caret(&self, folded: bool) -> Option<usize> {
+        let line = self.rope.char_to_line(self.selection.primary().head);
+        let candidates: Vec<(usize, usize)> = if folded {
+            self.map.folded().to_vec()
+        } else {
+            self.regions.clone()
+        };
+        candidates
+            .into_iter()
+            .filter(|&(start, end)| start <= line && line <= end)
+            .max_by_key(|&(start, _)| start)
+            .map(|(start, _)| start)
+    }
+
+    /// A caret that ended up inside a folded region opens it, as in JetBrains IDEs.
+    fn unfold_around_carets(&mut self) {
+        let hidden: Vec<usize> = self
+            .selection
+            .ranges()
+            .iter()
+            .map(|r| self.rope.char_to_line(r.head))
+            .filter(|&line| self.map.is_hidden(line))
+            .collect();
+        if hidden.is_empty() {
+            return;
+        }
+        let rope = &self.rope;
+        self.folded.retain(|&(start, end)| {
+            let (a, b) = (rope.char_to_line(start), rope.char_to_line(end));
+            !hidden.iter().any(|&line| a < line && line < b)
+        });
+        self.apply_folds();
+    }
+
+    fn fold_command(&mut self, command: &str) {
+        self.refresh_regions();
+        match command {
+            "editor.fold" => {
+                if let Some(line) = self.region_at_caret(false) {
+                    self.fold_line(line, true);
+                    // The caret moves to the visible first line of the region.
+                    let start = self.rope.line_to_char(line);
+                    if self
+                        .map
+                        .is_hidden(self.rope.char_to_line(self.selection.primary().head))
+                    {
+                        self.selection =
+                            Selection::point(start + crate::text::line_len(&self.rope, line));
+                    }
+                }
+            }
+            "editor.unfold" => {
+                if let Some(line) = self.region_at_caret(true) {
+                    self.fold_line(line, false);
+                }
+            }
+            "editor.foldAll" => {
+                let regions = self.regions.clone();
+                self.folded = regions
+                    .iter()
+                    .map(|&(a, b)| (self.rope.line_to_char(a), self.rope.line_to_char(b)))
+                    .collect();
+                self.apply_folds();
+                self.unfold_around_carets();
+            }
+            "editor.unfoldAll" => {
+                self.folded.clear();
+                self.apply_folds();
+            }
+            _ => {}
         }
     }
 
@@ -945,6 +1103,19 @@ impl EditorView {
 
     fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus);
+        // A click on a fold marker in the gutter folds or unfolds that region.
+        if let Some(layout) = &self.layout
+            && event.position.x < layout.text_left
+            && let Some(at) = self.char_at_point(event.position)
+        {
+            let line = self.rope.char_to_line(at);
+            let folded = self.map.folded().iter().any(|f| f.0 == line);
+            if folded || self.regions.iter().any(|r| r.0 == line) {
+                self.fold_line(line, !folded);
+                cx.notify();
+                return;
+            }
+        }
         let Some(at) = self.char_at_point(event.position) else {
             return;
         };
@@ -1204,6 +1375,8 @@ struct EditorElement {
 }
 
 struct Prepaint {
+    /// Fold markers and placeholders, painted over the gutter and text.
+    markers: Vec<(Point<Pixels>, ShapedLine)>,
     layout: Layout,
     gutter: Vec<(Pixels, ShapedLine)>,
     gutter_width: Pixels,
@@ -1271,6 +1444,8 @@ impl Element for EditorElement {
                 view.rewrap();
             });
         }
+        // Foldable regions follow the document version (read from the syntax tree).
+        self.view.update(cx, |view, _cx| view.refresh_regions());
         let view = self.view.read(cx);
         let style = &view.style;
         let line_height = px(style.line_height);
@@ -1292,7 +1467,7 @@ impl Element for EditorElement {
         // Gutter wide enough for the largest line number.
         let digits = view.rope.len_lines().to_string().len().max(2);
         let digit_width = shape("0".into(), &[run(1, style.gutter_foreground)]).width;
-        let gutter_width = digit_width * (digits as f32 + 3.0);
+        let gutter_width = digit_width * (digits as f32 + 4.0);
         let text_left = bounds.left() + gutter_width + px(6.0);
 
         let scroll = view.scroll;
@@ -1328,6 +1503,7 @@ impl Element for EditorElement {
         let mut gutter = Vec::new();
         let mut quads = Vec::new();
         let mut carets = Vec::new();
+        let mut markers = Vec::new();
         for index in first_row..last_row {
             let row = view.map.row(&view.rope, index);
             let top = bounds.top() + offset_y + line_height * (index - first_row) as f32;
@@ -1401,8 +1577,36 @@ impl Element for EditorElement {
                     style.gutter_foreground
                 };
                 let shaped = shape(number.clone(), &[run(number.len(), color)]);
-                let x = bounds.left() + gutter_width - shaped.width - digit_width;
+                let x = bounds.left() + gutter_width - shaped.width - digit_width * 2.0;
                 gutter.push((x, shaped));
+                // Fold markers right of the numbers: open regions and folded ones.
+                let folded = view.map.folded().iter().any(|f| f.0 == row.line);
+                if folded || view.regions.iter().any(|r| r.0 == row.line) {
+                    let symbol = if folded { "▸" } else { "▾" };
+                    let shaped = shape(
+                        symbol.to_owned(),
+                        &[run(symbol.len(), style.gutter_foreground)],
+                    );
+                    markers.push((
+                        point(bounds.left() + gutter_width - digit_width * 1.6, top),
+                        shaped,
+                    ));
+                }
+            }
+            // A folded region shows `…` after its first line.
+            let line_end =
+                view.rope.line_to_char(row.line) + crate::text::line_len(&view.rope, row.line);
+            if row.end == line_end && view.map.folded().iter().any(|f| f.0 == row.line) {
+                let x = text_left - scroll.x + row_layout.x_for(row.end) + digit_width;
+                let dots = shape("…".to_owned(), &[run("…".len(), style.gutter_foreground)]);
+                quads.push(fill(
+                    Bounds::new(
+                        point(x - px(3.0), top + px(2.0)),
+                        size(dots.width + px(6.0), line_height - px(4.0)),
+                    ),
+                    style.line_highlight,
+                ));
+                markers.push((point(x, top), dots));
             }
             let left = text_left - scroll.x;
             // Find matches under the selections.
@@ -1466,6 +1670,7 @@ impl Element for EditorElement {
             gutter_width,
             quads,
             carets,
+            markers,
         }
     }
 
@@ -1540,6 +1745,9 @@ impl Element for EditorElement {
                     let y = bounds.top() + offset_y + line_height * i as f32;
                     let _ = number.paint(point(x, y), line_height, window, cx);
                 }
+            }
+            for (origin, shaped) in prepaint.markers.drain(..) {
+                let _ = shaped.paint(origin, line_height, window, cx);
             }
         });
         let layout = std::mem::replace(

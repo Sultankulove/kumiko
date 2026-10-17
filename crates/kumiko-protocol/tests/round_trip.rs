@@ -183,6 +183,10 @@ fn all_samples() -> Samples {
             },
             config: json!({"sample.enabled": true}),
             locale: "ru".into(),
+            storage: Some(lifecycle::PluginStorage {
+                data: "/d/sample".into(),
+                cache: "/c/sample".into(),
+            }),
         },
         lifecycle::InitializeResult {
             api_version: "0.1.0".into(),

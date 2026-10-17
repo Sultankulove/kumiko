@@ -56,6 +56,7 @@ fn init_params(api_version: &str) -> InitializeParams {
         workspace: WorkspaceInfo::default(),
         config: json!({}),
         locale: "ru".to_owned(),
+        storage: None,
     }
 }
 

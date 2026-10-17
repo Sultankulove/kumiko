@@ -670,6 +670,18 @@
           "$ref": "#/$defs/PluginId",
           "description": "Id of the plugin being initialized, as in its manifest."
         },
+        "storage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PluginStorage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Directories of the plugin's own, created by the host."
+        },
         "workspace": {
           "$ref": "#/$defs/WorkspaceInfo"
         }
@@ -937,6 +949,22 @@
       "required": [
         "plugin",
         "state"
+      ],
+      "type": "object"
+    },
+    "PluginStorage": {
+      "description": "Where a plugin keeps files: `data` survives updates of the plugin, `cache` may be deleted.",
+      "properties": {
+        "cache": {
+          "type": "string"
+        },
+        "data": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "cache"
       ],
       "type": "object"
     },

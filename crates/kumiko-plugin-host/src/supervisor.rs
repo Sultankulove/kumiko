@@ -84,6 +84,7 @@ pub struct Session {
     /// Current values of the plugin's own settings.
     pub config: Value,
     pub locale: String,
+    pub storage: Option<kumiko_protocol::methods::lifecycle::PluginStorage>,
 }
 
 #[derive(Debug, Clone)]
@@ -663,6 +664,7 @@ impl PluginHost {
             },
             workspace: session.workspace,
             config: session.config,
+            storage: session.storage,
             locale: session.locale,
         };
         let conn = &running.conn;

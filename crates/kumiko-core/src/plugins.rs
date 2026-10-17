@@ -17,7 +17,7 @@ use kumiko_plugin_host::{
 use kumiko_project::ProjectService;
 use kumiko_protocol::common::CommandCall;
 use kumiko_protocol::events::{InterfaceAvailabilityChanged, PluginState, PluginStateChanged};
-use kumiko_protocol::methods::lifecycle::WorkspaceInfo;
+use kumiko_protocol::methods::lifecycle::{PluginStorage, WorkspaceInfo};
 use kumiko_protocol::methods::lsp::LspMessageParams;
 use kumiko_protocol::{ErrorCode, ResponseError};
 use kumiko_service_api::wasm::WasmRuntime;
@@ -61,6 +61,7 @@ impl PluginManager {
             project: services.project.clone(),
             locale: services.locale.clone(),
             language: services.language.clone(),
+            dirs: dirs.clone(),
         });
         let host = PluginHost::new(
             registry.clone(),
@@ -333,6 +334,7 @@ struct CoreHostApi {
     project: Arc<ProjectService>,
     locale: Option<String>,
     language: Arc<std::sync::OnceLock<kumiko_lsp::LanguageService>>,
+    dirs: KumikoDirs,
 }
 
 impl HostApi for CoreHostApi {
@@ -401,6 +403,20 @@ impl HostApi for CoreHostApi {
             },
             config: Value::Object(self.config.section(plugin.namespace(), None)),
             locale: crate::effective_locale(self.locale.as_deref(), &self.config),
+            storage: {
+                let id = plugin.id().as_str();
+                let data = self.dirs.data_dir().join("plugin-data").join(id);
+                let cache = self.dirs.cache_dir().join("plugins").join(id);
+                for dir in [&data, &cache] {
+                    if let Err(error) = std::fs::create_dir_all(dir) {
+                        tracing::warn!(plugin = %id, "cannot create {}: {error}", dir.display());
+                    }
+                }
+                Some(PluginStorage {
+                    data: data.to_string_lossy().into_owned(),
+                    cache: cache.to_string_lossy().into_owned(),
+                })
+            },
         }
     }
 

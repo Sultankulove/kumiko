@@ -3628,6 +3628,9 @@ name = "kumiko-java"
 version = "0.1.0"
 dependencies = [
  "kumiko-plugin-sdk",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

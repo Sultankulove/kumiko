@@ -42,6 +42,7 @@ use crate::tabs::{Split, Tab, Tabs};
 use crate::terminal::TerminalProvider;
 
 mod language;
+mod plugin_ui;
 mod search;
 mod tasks;
 mod terminal;
@@ -136,6 +137,15 @@ pub struct Workbench {
     text_generation: u64,
     text_error: Option<String>,
     text_options: search::TextOptions,
+    /// The question a plugin asked (waiting in the popup), its prompt and choices.
+    ask: Option<plugin_ui::Ask>,
+    ask_prompt: String,
+    ask_items: Vec<Item>,
+    /// Views of plugins, and the tree nodes the user toggled away from their default.
+    plugin_views: Vec<String>,
+    tree_toggles: std::collections::HashSet<String>,
+    /// File colours and badges plugins set (Git), by file.
+    decorations: HashMap<Uri, (Option<u32>, Option<String>)>,
     /// Tasks offered by Run Task.
     task_list: Vec<kumiko_core::tasks::Task>,
     language_target: Option<(Uri, kumiko_types::Position)>,
@@ -213,6 +223,12 @@ impl Workbench {
             symbols: None,
             usages: Vec::new(),
             task_list: Vec::new(),
+            decorations: HashMap::new(),
+            ask: None,
+            ask_prompt: String::new(),
+            ask_items: Vec::new(),
+            plugin_views: Vec::new(),
+            tree_toggles: std::collections::HashSet::new(),
             text_results: Vec::new(),
             text_generation: 0,
             text_error: None,
@@ -240,6 +256,8 @@ impl Workbench {
         workbench.watch_output(cx);
         workbench.refresh_roots(cx);
         workbench.refresh_problems();
+        workbench.refresh_plugin_views();
+        workbench.listen_to_plugins(cx);
         workbench.refresh_output();
         workbench.publish_context();
         workbench
@@ -282,6 +300,9 @@ impl Workbench {
                 self.toggle_tool_window(window);
                 if window == ToolWindow::Terminal {
                     self.ensure_terminal(cx);
+                }
+                if window == ToolWindow::Commit && self.layout.is_open(window) {
+                    self.refresh_commit(cx);
                 }
             }
             UiCommand::NewTerminal => {
@@ -444,6 +465,7 @@ impl Workbench {
             "language.statusChanged",
             "terminal.opened",
             "terminal.closed",
+            "ui.changed",
         ];
         let mut events = core.events().subscribe(EventFilter::topics(topics));
         cx.spawn(async move |this, cx| {
@@ -482,6 +504,9 @@ impl Workbench {
         } else if let Some(Ok(closed)) = event.decode::<TerminalClosed>() {
             self.terminal_closed(closed.terminal);
             cx.notify();
+        } else if event.topic == "ui.changed" {
+            self.refresh_decorations();
+            cx.notify();
         } else if event.topic == "language.statusChanged" {
             cx.notify();
         } else if event.topic == "language.diagnosticsChanged" {
@@ -490,6 +515,9 @@ impl Workbench {
         } else if event.topic.starts_with("config.") || event.topic.starts_with("plugin.") {
             if event.topic.starts_with("config.") {
                 self.reload_settings(cx);
+            }
+            if event.topic.starts_with("plugin.") {
+                self.refresh_plugin_views();
             }
             self.refresh_problems();
             cx.notify();
@@ -819,6 +847,9 @@ impl Workbench {
 
     fn close_quick(&mut self) {
         self.quick_open = None;
+        if let Some(ask) = self.ask.take() {
+            ask.cancel();
+        }
         self.focus_request = Some(if self.split.tabs().len() > 0 {
             FocusTarget::Editor
         } else {
@@ -848,6 +879,8 @@ impl Workbench {
             Mode::Rename => self.rename_items(&query),
             Mode::Tasks => self.task_items(&query),
             Mode::FindInFiles => self.text_items(&query),
+            Mode::Ask => self.ask_items(&query),
+            Mode::Pick => self.pick_items(&query),
         };
         let items = if items.is_empty() {
             vec![self.note("quickOpen.noResults")]
@@ -1092,7 +1125,12 @@ impl Workbench {
             .as_ref()
             .map(|q| q.query().to_owned())
             .unwrap_or_default();
+        // Closing the popup cancels a plugin's question; an answer keeps it.
+        let keep = matches!(action, Action::Answer(_))
+            .then(|| self.ask.take())
+            .flatten();
         self.close_quick();
+        self.ask = keep.or(self.ask.take());
         match action {
             Action::OpenFile(uri) => {
                 self.execute_id("workbench.openFile", vec![Value::from(uri.as_str())], cx)
@@ -1110,6 +1148,7 @@ impl Workbench {
                 self.execute_id("workbench.openFile", args, cx)
             }
             Action::Rename => self.rename(query, cx),
+            Action::Answer(choice) => self.answer(choice, query),
             Action::RunTask(index) => self.run_task(index, cx),
             Action::GotoLine(line) => {
                 if let Some(editor) = self.active_editor() {
@@ -1889,6 +1928,11 @@ impl Workbench {
                     .flex()
                     .gap_4()
                     // Language servers at work, as IntelliJ shows background tasks.
+                    .children(
+                        self.plugin_status()
+                            .into_iter()
+                            .map(|text| div().text_color(rgba(p_muted)).child(text)),
+                    )
                     .children(self.core.language().progress().into_iter().last().map(|p| {
                         let mut text = format!("{}: {}", p.server, p.title);
                         if let Some(message) = p.message {
@@ -2178,6 +2222,8 @@ impl Workbench {
                     Mode::Usages => "usages.placeholder",
                     Mode::Tasks => "tasks.placeholder",
                     Mode::FindInFiles => "findInFiles.prompt",
+                    Mode::Ask => "ask.prompt",
+                    Mode::Pick => "ask.pick",
                     Mode::Rename => "rename.prompt",
                     Mode::Themes => "quickOpen.themes",
                     _ => "quickOpen.placeholder",
@@ -2359,6 +2405,7 @@ impl Workbench {
             ToolWindow::Problems => self.problems_view(cx),
             ToolWindow::Output => self.output_view(cx),
             ToolWindow::Terminal => self.terminal_view(cx),
+            ToolWindow::Commit => self.commit_view(cx),
         };
         let panel = place(rect)
             .bg(rgba(p.panel))
@@ -2438,7 +2485,23 @@ impl Workbench {
                                     },
                                 ))
                                 .child(div().w(px(10.0)).text_color(rgba(p.muted)).child(arrow))
-                                .child(row.name),
+                                .child(match this.decorations.get(&row.uri) {
+                                    Some((color, _)) => div()
+                                        .text_color(rgba(color.unwrap_or(p.foreground)))
+                                        .child(row.name.clone()),
+                                    None => div().child(row.name.clone()),
+                                })
+                                .children(
+                                    this.decorations
+                                        .get(&row.uri)
+                                        .and_then(|(_, badge)| badge.clone())
+                                        .map(|badge| {
+                                            div()
+                                                .text_color(rgba(p.muted))
+                                                .text_size(px(10.0))
+                                                .child(badge)
+                                        }),
+                                ),
                         )
                     })
                     .collect::<Vec<_>>()

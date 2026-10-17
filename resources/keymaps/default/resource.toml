@@ -423,3 +423,7 @@ command = "workbench.findInFiles"
 [[binding]]
 key = "alt+f12"
 command = "workbench.toggleTerminal"
+
+[[binding]]
+key = "alt+0"
+command = "workbench.toggleCommit"

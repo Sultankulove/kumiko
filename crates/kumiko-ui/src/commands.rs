@@ -62,6 +62,9 @@ const COMMANDS: &[(&str, Parse)] = &[
         Ok(UiCommand::Toggle(ToolWindow::Terminal))
     }),
     ("workbench.newTerminal", |_| Ok(UiCommand::NewTerminal)),
+    ("workbench.toggleCommit", |_| {
+        Ok(UiCommand::Toggle(ToolWindow::Commit))
+    }),
     ("workbench.openFile", open_file),
     ("workbench.quickOpen", |_| {
         Ok(UiCommand::QuickOpen(Mode::Files))

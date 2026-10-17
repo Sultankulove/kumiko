@@ -207,3 +207,19 @@ impl Workbench {
             .into_any_element()
     }
 }
+
+impl Workbench {
+    /// Colours and badges plugins gave files, resolved against the theme.
+    pub(super) fn refresh_decorations(&mut self) {
+        self.decorations = self
+            .core
+            .file_decorations()
+            .into_iter()
+            .filter_map(|(uri, list)| {
+                let first = list.into_iter().next()?;
+                let color = first.color.as_deref().and_then(|t| self.palette.token(t));
+                Some((uri, (color, first.badge)))
+            })
+            .collect();
+    }
+}

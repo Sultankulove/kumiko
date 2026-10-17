@@ -45,6 +45,9 @@ pub struct Palette {
     pub info: Rgba,
     /// Syntax token styles of the theme (spec, section 21), by capture name.
     pub syntax: Vec<SyntaxColor>,
+    /// Colours plugins name by token (`vcs.modified`, …), resolved at load: a plugin cannot
+    /// ask for a token the theme does not know, so the common ones are listed here.
+    pub tokens: Vec<(String, Rgba)>,
 }
 
 /// How a syntax capture (`keyword`, `string`, …) is drawn.
@@ -217,9 +220,33 @@ impl Palette {
             warning: pick(&["warning"], 0xBE9117FF, 0xB58900FF),
             info: pick(&["info"], 0x3592C4FF, 0x3574F0FF),
             syntax: Vec::new(),
+            tokens: PLUGIN_TOKENS
+                .iter()
+                .map(|(name, dark_default, light_default)| {
+                    (
+                        (*name).to_owned(),
+                        pick(&[name], *dark_default, *light_default),
+                    )
+                })
+                .collect(),
         }
     }
+
+    /// A colour token a plugin used (`vcs.modified`).
+    pub fn token(&self, name: &str) -> Option<Rgba> {
+        self.tokens.iter().find(|(n, _)| n == name).map(|(_, c)| *c)
+    }
 }
+
+/// Tokens of plugin UI with their dark and light defaults (IntelliJ's VCS colours).
+const PLUGIN_TOKENS: &[(&str, Rgba, Rgba)] = &[
+    ("vcs.added", 0x629755FF, 0x2E7D32FF),
+    ("vcs.modified", 0x6897BBFF, 0x1565C0FF),
+    ("vcs.deleted", 0x6C6C6CFF, 0x757575FF),
+    ("vcs.renamed", 0x6897BBFF, 0x1565C0FF),
+    ("vcs.untracked", 0xD1675AFF, 0xC62828FF),
+    ("vcs.conflict", 0xD5756CFF, 0xC62828FF),
+];
 
 #[cfg(test)]
 mod tests {

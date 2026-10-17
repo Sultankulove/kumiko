@@ -23,6 +23,10 @@ pub enum Mode {
     Tasks,
     /// Text in the project's files (Ctrl+Shift+F): the input is the query.
     FindInFiles,
+    /// A plugin asks for text (`ui/showInput`): the input is the answer.
+    Ask,
+    /// A plugin asks to pick (`ui/showQuickPick`).
+    Pick,
 }
 
 impl Mode {
@@ -33,7 +37,13 @@ impl Mode {
             Mode::Commands => ">",
             Mode::Line => ":",
             Mode::Symbols => "@",
-            Mode::Themes | Mode::Usages | Mode::Rename | Mode::Tasks | Mode::FindInFiles => "",
+            Mode::Themes
+            | Mode::Usages
+            | Mode::Rename
+            | Mode::Tasks
+            | Mode::FindInFiles
+            | Mode::Ask
+            | Mode::Pick => "",
         }
     }
 }
@@ -52,6 +62,8 @@ pub enum Action {
     Rename,
     /// Run the task with this index of the offered list.
     RunTask(usize),
+    /// The answer to a plugin's question: the chosen index, or the typed text.
+    Answer(Option<usize>),
     /// Informational row (e.g. "no results").
     None,
 }

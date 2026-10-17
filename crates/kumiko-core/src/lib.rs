@@ -47,6 +47,7 @@ use kumiko_types::paths::workspace_settings_dir;
 use kumiko_types::{KumikoDirs, PluginId};
 use kumiko_wasm_host::{WasmConfig, WasmEngine};
 
+pub mod kits;
 mod language_host;
 pub mod output;
 pub mod plugin_ui;
@@ -88,6 +89,9 @@ pub struct CoreOptions {
     pub plugins: SupervisorConfig,
     /// WASM runtime limits; the compilation cache defaults to `dirs.wasm_cache_dir()`.
     pub wasm: WasmConfig,
+    /// Plugins shipped with the distribution, one folder per id (`<dir>/<id>/plugin.toml`):
+    /// where kits install missing plugins from.
+    pub bundled_plugins: Option<PathBuf>,
     /// Output channels; pass one in to have logging reach it from the start.
     pub output: output::Output,
 }
@@ -106,6 +110,7 @@ impl CoreOptions {
             watcher: WatcherConfig::default(),
             plugins: SupervisorConfig::default(),
             wasm,
+            bundled_plugins: None,
             output: output::Output::new(),
         }
     }
@@ -288,6 +293,7 @@ impl CoreApi {
         };
         let _ = language_slot.set(core.inner.language.clone());
         let _ = core_slot.set(Arc::downgrade(&core.inner));
+        core.restore_kit();
         core.spawn_wiring();
         core.spawn_indexer();
         let wiring = language_host::spawn_wiring(&core);

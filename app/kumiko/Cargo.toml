@@ -11,10 +11,18 @@ publish = false
 [lints]
 workspace = true
 
+# Build profiles of L1 (spec, section 15): the editor is chosen at build time.
+[features]
+default = ["editor-default"]
+# The default editor view (`kumiko-editor-view`).
+editor-default = ["dep:kumiko-editor-view"]
+# Another editor: the distribution adds `src/editor_alt.rs` with an `EditorProvider`.
+alt-editor = []
+
 [dependencies]
 kumiko-core.workspace = true
 kumiko-ui.workspace = true
-kumiko-editor-view.workspace = true
+kumiko-editor-view = { workspace = true, optional = true }
 kumiko-terminal-view.workspace = true
 kumiko-types.workspace = true
 anyhow.workspace = true

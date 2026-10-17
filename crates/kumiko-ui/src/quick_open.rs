@@ -27,6 +27,8 @@ pub enum Mode {
     Ask,
     /// A plugin asks to pick (`ui/showQuickPick`).
     Pick,
+    /// Kits to apply.
+    Kits,
 }
 
 impl Mode {
@@ -43,7 +45,8 @@ impl Mode {
             | Mode::Tasks
             | Mode::FindInFiles
             | Mode::Ask
-            | Mode::Pick => "",
+            | Mode::Pick
+            | Mode::Kits => "",
         }
     }
 }
@@ -64,6 +67,8 @@ pub enum Action {
     RunTask(usize),
     /// The answer to a plugin's question: the chosen index, or the typed text.
     Answer(Option<usize>),
+    /// Apply the kit with this index of the offered list.
+    ApplyKit(usize),
     /// Informational row (e.g. "no results").
     None,
 }

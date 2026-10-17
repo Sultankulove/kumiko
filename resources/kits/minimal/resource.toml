@@ -1,0 +1,20 @@
+# Kit `minimal` (spec, section 15): the editor, the project tree and search, no language
+# plugins. Applying it disables every plugin; they stay installed.
+[resource]
+id = "kumiko.kit.minimal"
+kind = "kit"
+version = "0.1.0"
+name = "Minimal"
+
+[kit]
+id = "kumiko.kit.minimal"
+name = "Minimal"
+version = "0.1.0"
+kumiko = "^0.1"
+description = "Editor, project tree and search; no plugins."
+exclusive = true
+
+[plugins]
+
+[resources]
+theme = "kumiko.theme.darcula"

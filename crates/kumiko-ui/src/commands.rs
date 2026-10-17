@@ -41,6 +41,7 @@ pub enum UiCommand {
     StopTasks,
     FindInFiles,
     NewTerminal,
+    ApplyKit,
     Quit,
 }
 
@@ -62,6 +63,7 @@ const COMMANDS: &[(&str, Parse)] = &[
         Ok(UiCommand::Toggle(ToolWindow::Terminal))
     }),
     ("workbench.newTerminal", |_| Ok(UiCommand::NewTerminal)),
+    ("workbench.applyKit", |_| Ok(UiCommand::ApplyKit)),
     ("workbench.toggleCommit", |_| {
         Ok(UiCommand::Toggle(ToolWindow::Commit))
     }),

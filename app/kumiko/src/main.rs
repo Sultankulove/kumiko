@@ -9,21 +9,36 @@ use anyhow::Context as _;
 use kumiko_core::{CoreApi, CoreOptions};
 use kumiko_types::KumikoDirs;
 
+#[cfg(feature = "editor-default")]
 mod editor;
+#[cfg(all(feature = "alt-editor", not(feature = "editor-default")))]
+#[path = "editor_alt.rs"]
+mod editor;
+#[cfg(not(any(feature = "editor-default", feature = "alt-editor")))]
+compile_error!("choose an editor: feature `editor-default` or `alt-editor` (docs/sdk/distributions.md)");
+mod kit;
 mod log;
 mod terminal;
 
 fn main() -> anyhow::Result<()> {
     let started = std::time::Instant::now();
     let mut folder = None;
-    for arg in std::env::args_os().skip(1) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let kit_command = args.first().is_some_and(|a| a == "kit");
+    for arg in std::env::args_os()
+        .skip(1)
+        .take(if kit_command { 0 } else { usize::MAX })
+    {
         match arg.to_str() {
             Some("--version" | "-V") => {
                 println!("kumiko {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
             Some("--help" | "-h") => {
-                println!("usage: kumiko [FOLDER]");
+                println!(
+                    "usage: kumiko [FOLDER]
+       kumiko kit list | apply <path|id> | diff <path|id> | export [id] [name]"
+                );
                 return Ok(());
             }
             _ => folder = Some(PathBuf::from(arg)),
@@ -42,10 +57,25 @@ fn main() -> anyhow::Result<()> {
     let mut options = CoreOptions::new(dirs);
     options.output = output;
     options.builtin_resources = builtin_resources();
+    options.bundled_plugins = bundled_plugins();
     if options.builtin_resources.is_none() {
         tracing::warn!("built-in resources not found; set KUMIKO_RESOURCES");
     }
     let core = runtime.block_on(CoreApi::start(options))?;
+    if kit_command {
+        let result = runtime.block_on(kit::run(&core, &args[1..]));
+        runtime.block_on(core.shutdown());
+        return match result {
+            Ok(text) => {
+                println!("{text}");
+                Ok(())
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2)
+            }
+        };
+    }
     // The window does not wait for the folder: watching a large tree takes seconds on slow
     // file systems (docs/research/ui-linux-native.md). The project tree appears when the
     // folder is added.
@@ -83,4 +113,16 @@ fn builtin_resources() -> Option<PathBuf> {
         .into_iter()
         .flatten()
         .find(|dir| dir.join("settings").is_dir())
+}
+
+/// `KUMIKO_PLUGINS`, else `plugins/` next to the executable: plugins a distribution ships
+/// (one folder per plugin id), where kits install missing plugins from.
+fn bundled_plugins() -> Option<PathBuf> {
+    let candidates = [
+        std::env::var_os("KUMIKO_PLUGINS").map(PathBuf::from),
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.join("plugins"))),
+    ];
+    candidates.into_iter().flatten().find(|dir| dir.is_dir())
 }

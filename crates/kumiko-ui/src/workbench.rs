@@ -41,6 +41,7 @@ use crate::state::{self, GroupState, WorkspaceState};
 use crate::tabs::{Split, Tab, Tabs};
 use crate::terminal::TerminalProvider;
 
+mod kits;
 mod language;
 mod plugin_ui;
 mod search;
@@ -146,6 +147,8 @@ pub struct Workbench {
     tree_toggles: std::collections::HashSet<String>,
     /// File colours and badges plugins set (Git), by file.
     decorations: HashMap<Uri, (Option<u32>, Option<String>)>,
+    /// Kits offered by Apply Kit, with what applying each would do.
+    kit_rows: Vec<(kumiko_core::kits::KitInfo, String)>,
     /// Tasks offered by Run Task.
     task_list: Vec<kumiko_core::tasks::Task>,
     language_target: Option<(Uri, kumiko_types::Position)>,
@@ -224,6 +227,7 @@ impl Workbench {
             usages: Vec::new(),
             task_list: Vec::new(),
             decorations: HashMap::new(),
+            kit_rows: Vec::new(),
             ask: None,
             ask_prompt: String::new(),
             ask_items: Vec::new(),
@@ -323,6 +327,7 @@ impl Workbench {
             UiCommand::Rename => self.open_rename(cx),
             UiCommand::Reformat => self.reformat(cx),
             UiCommand::RunTask => self.open_tasks(cx),
+            UiCommand::ApplyKit => self.open_kits(),
             UiCommand::FindInFiles => self.open_find_in_files(cx),
             UiCommand::StopTasks => self.stop_tasks(),
             UiCommand::SelectTheme => {
@@ -880,6 +885,7 @@ impl Workbench {
             Mode::Tasks => self.task_items(&query),
             Mode::FindInFiles => self.text_items(&query),
             Mode::Ask => self.ask_items(&query),
+            Mode::Kits => self.kit_items(&query),
             Mode::Pick => self.pick_items(&query),
         };
         let items = if items.is_empty() {
@@ -1150,6 +1156,7 @@ impl Workbench {
             Action::Rename => self.rename(query, cx),
             Action::Answer(choice) => self.answer(choice, query),
             Action::RunTask(index) => self.run_task(index, cx),
+            Action::ApplyKit(index) => self.apply_kit(index, cx),
             Action::GotoLine(line) => {
                 if let Some(editor) = self.active_editor() {
                     (editor.goto_line)(line, cx);
@@ -2223,6 +2230,7 @@ impl Workbench {
                     Mode::Tasks => "tasks.placeholder",
                     Mode::FindInFiles => "findInFiles.prompt",
                     Mode::Ask => "ask.prompt",
+                    Mode::Kits => "kits.placeholder",
                     Mode::Pick => "ask.pick",
                     Mode::Rename => "rename.prompt",
                     Mode::Themes => "quickOpen.themes",

@@ -9,6 +9,7 @@ mod e10_tasks;
 mod e11_search;
 mod e11_terminal;
 mod e12_git;
+mod e13_kits;
 mod e3_documents;
 mod e4_plugins;
 mod e4_process;

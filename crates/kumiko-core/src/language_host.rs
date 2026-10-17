@@ -7,8 +7,11 @@ use kumiko_events::{Delivery, EventFilter};
 use kumiko_lsp::{LanguageHost, LanguageService, ServerDecl, WorkspaceEdit};
 use kumiko_protocol::events::{
     DiagnosticsChanged, DocumentChanged, DocumentClosed, DocumentOpened, DocumentSaved,
+    LanguageStatusChanged,
 };
-use kumiko_protocol::methods::lsp::{LaunchSpec, ResolveLaunchParams};
+use kumiko_protocol::methods::lsp::{
+    LaunchSpec, LspMessageParams, MiddlewareResult, ResolveLaunchParams,
+};
 use kumiko_service_api::{BoxFuture, Event, EventSink, FileSystem};
 use kumiko_types::{PluginId, Uri};
 
@@ -71,6 +74,14 @@ impl LanguageHost for Host {
         })
     }
 
+    fn status_changed(&self) {
+        if let Some(core) = self.core() {
+            core.inner
+                .events
+                .publish(Event::core(&LanguageStatusChanged {}));
+        }
+    }
+
     fn diagnostics_changed(&self, uris: Vec<Uri>) {
         if let Some(core) = self.core() {
             core.inner
@@ -87,6 +98,36 @@ impl LanguageHost for Host {
                 .output
                 .append(LANGUAGE_CHANNEL, &format!("[{server}] {message}"));
         }
+    }
+
+    fn middleware(&self, server: &ServerDecl) -> Vec<String> {
+        let (Some(core), Ok(plugin)) = (self.core(), PluginId::new(server.plugin.clone())) else {
+            return Vec::new();
+        };
+        core.plugin_host().lsp_middleware(&plugin)
+    }
+
+    fn intercept(
+        &self,
+        server: &ServerDecl,
+        method: &str,
+        params: serde_json::Value,
+    ) -> BoxFuture<'static, Result<MiddlewareResult, String>> {
+        let core = self.core();
+        let plugin = PluginId::new(server.plugin.clone());
+        let message = LspMessageParams {
+            server_id: server.id.clone(),
+            method: method.to_owned(),
+            params,
+        };
+        Box::pin(async move {
+            let core = core.ok_or("the IDE is shutting down")?;
+            let plugin = plugin.map_err(|e| e.to_string())?;
+            core.plugin_host()
+                .lsp_middleware_request(&plugin, message)
+                .await
+                .map_err(|e| e.message)
+        })
     }
 
     fn document_version(&self, uri: &Uri) -> Option<u64> {

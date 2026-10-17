@@ -682,6 +682,7 @@ fn all_samples() -> Samples {
     s.event(events::DiagnosticsChanged {
         uris: vec![Uri::parse("file:///w/src/A.txt").unwrap()],
     });
+    s.event(events::LanguageStatusChanged {});
     s
 }
 

@@ -719,6 +719,9 @@
       "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$",
       "type": "string"
     },
+    "LanguageStatusChanged": {
+      "type": "object"
+    },
     "LaunchSpec": {
       "properties": {
         "args": {
@@ -2164,6 +2167,13 @@
       "description": "Diagnostics of these files changed.",
       "payload": {
         "$ref": "#/$defs/DiagnosticsChanged"
+      }
+    },
+    "language.statusChanged": {
+      "class": "notification",
+      "description": "Language servers started, stopped or reported progress; read the status again.",
+      "payload": {
+        "$ref": "#/$defs/LanguageStatusChanged"
       }
     },
     "plugin.stateChanged": {

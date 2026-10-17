@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::watch;
 
-use kumiko_protocol::methods::lsp::LaunchSpec;
+use kumiko_protocol::methods::lsp::{LaunchSpec, MiddlewareResult};
 use kumiko_service_api::{BoxFuture, ProcessControl, ProcessSpec, Processes};
 use kumiko_types::{Position, Range, TextEdit, Uri};
 
@@ -70,8 +70,19 @@ pub trait LanguageHost: Send + Sync + 'static {
     /// A server's log line (`window/logMessage`, stderr).
     fn log(&self, server: &str, message: &str);
     fn workspace_folders(&self) -> Vec<Uri>;
+    /// Servers started, stopped or reported progress.
+    fn status_changed(&self);
     /// The version an open document has now; the service may still be catching up with it.
     fn document_version(&self, uri: &Uri) -> Option<u64>;
+    /// LSP methods the plugin contributing `server` intercepts (`lspMiddleware`).
+    fn middleware(&self, server: &ServerDecl) -> Vec<String>;
+    /// Hands an intercepted message to the plugin (`lsp/middleware/request`).
+    fn intercept(
+        &self,
+        server: &ServerDecl,
+        method: &str,
+        params: Value,
+    ) -> BoxFuture<'static, Result<MiddlewareResult, String>>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +133,15 @@ struct Server {
     restarts: Mutex<u32>,
 }
 
+/// What a server reports doing (`$/progress`, work done progress).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Progress {
+    pub server: String,
+    pub title: String,
+    pub message: Option<String>,
+    pub percentage: Option<u32>,
+}
+
 /// A server's diagnostics for one file: ours, and the raw ones for `codeAction` context.
 type FileDiagnostics = Vec<(ServerKey, Vec<(Diagnostic, lsp_types::Diagnostic)>)>;
 
@@ -131,6 +151,8 @@ struct State {
     docs: HashMap<Uri, Doc>,
     servers: HashMap<ServerKey, Arc<Server>>,
     diagnostics: HashMap<Uri, FileDiagnostics>,
+    /// Work in progress (`$/progress`) by server and token.
+    progress: Vec<(ServerKey, String, Progress)>,
     shut_down: bool,
 }
 
@@ -232,6 +254,15 @@ impl LanguageService {
             Status::Running(running) => Some(running.pid),
             _ => None,
         }
+    }
+
+    /// What the servers report doing, oldest first.
+    pub fn progress(&self) -> Vec<Progress> {
+        lock(&self.shared.state)
+            .progress
+            .iter()
+            .map(|(_, _, p)| p.clone())
+            .collect()
     }
 
     // ---- document sync ------------------------------------------------------------------
@@ -675,13 +706,35 @@ impl LanguageService {
             }
         }
         if let Some(command) = command {
+            let mut params = serde_json::to_value(lsp_types::ExecuteCommandParams {
+                command: command.command,
+                arguments: command.arguments.unwrap_or_default(),
+                work_done_progress_params: Default::default(),
+            })
+            .map_err(|e| e.to_string())?;
+            // Client-side commands (e.g. a server asking the editor to apply something) belong
+            // to the language plugin when it intercepts executeCommand.
+            let method = "workspace/executeCommand";
+            let decl = lock(&self.shared.state)
+                .servers
+                .get(&action.server)
+                .map(|s| s.decl.clone());
+            if let Some(decl) = decl
+                && self
+                    .shared
+                    .host
+                    .middleware(&decl)
+                    .iter()
+                    .any(|m| m == method)
+            {
+                match self.shared.host.intercept(&decl, method, params).await? {
+                    MiddlewareResult::Respond { .. } => return Ok(()),
+                    MiddlewareResult::Forward { params: forwarded } => params = forwarded,
+                }
+            }
             server
                 .client
-                .request::<lsp_types::request::ExecuteCommand>(lsp_types::ExecuteCommandParams {
-                    command: command.command,
-                    arguments: command.arguments.unwrap_or_default(),
-                    work_done_progress_params: Default::default(),
-                })
+                .request_value(method, &params)
                 .await
                 .map_err(|e| e.to_string())?;
         }
@@ -691,6 +744,7 @@ impl LanguageService {
     /// A raw request to a running server (`lsp/sendRequest` from its plugin).
     pub async fn send_request(
         &self,
+        plugin: &str,
         server_id: &str,
         method: &str,
         params: Value,
@@ -698,7 +752,7 @@ impl LanguageService {
         let running: Vec<Arc<Running>> = lock(&self.shared.state)
             .servers
             .values()
-            .filter(|s| s.key.id == server_id)
+            .filter(|s| s.key.id == server_id && s.decl.plugin == plugin)
             .filter_map(|s| s.running())
             .collect();
         let server = running.first().ok_or(LspError::Closed)?;
@@ -1131,6 +1185,7 @@ async fn start_inner(shared: Weak<Shared>, server: Arc<Server>) {
                 .host
                 .log(&server.key.id, &format!("cannot start: {error}"));
             let _ = server.status.send_replace(Status::Stopped(error));
+            strong.host.status_changed();
             return;
         }
     };
@@ -1152,6 +1207,7 @@ async fn start_inner(shared: Weak<Shared>, server: Arc<Server>) {
             }
         }
     }
+    strong.host.status_changed();
     drop(strong);
     tokio::spawn(watch_exit(shared, server, running));
 }
@@ -1271,6 +1327,9 @@ async fn watch_exit(shared: Weak<Shared>, server: Arc<Server>, running: Arc<Runn
         return; // stopped on purpose
     }
     strong.clear_diagnostics(&server.key);
+    lock(&strong.state)
+        .progress
+        .retain(|(k, _, _)| *k != server.key);
     let attempt = {
         let mut restarts = lock(&server.restarts);
         *restarts += 1;
@@ -1283,6 +1342,7 @@ async fn watch_exit(shared: Weak<Shared>, server: Arc<Server>, running: Arc<Runn
         let _ = server
             .status
             .send_replace(Status::Stopped("exited too often".into()));
+        strong.host.status_changed();
         return;
     }
     strong.host.log(
@@ -1290,6 +1350,7 @@ async fn watch_exit(shared: Weak<Shared>, server: Arc<Server>, running: Arc<Runn
         &format!("exited, restarting (attempt {attempt})"),
     );
     let _ = server.status.send_replace(Status::Starting);
+    strong.host.status_changed();
     drop(strong);
     tokio::time::sleep(Duration::from_millis(200 * u64::from(attempt))).await;
     start(shared, server).await;
@@ -1402,8 +1463,8 @@ struct Handler {
     encoding: Mutex<Encoding>,
 }
 
-impl ServerHandler for Handler {
-    fn notification(&self, method: &str, params: Value) {
+impl Handler {
+    fn default_notification(&self, method: &str, params: Value) {
         let Some(shared) = self.shared.upgrade() else {
             return;
         };
@@ -1442,6 +1503,54 @@ impl ServerHandler for Handler {
                     shared.set_diagnostics(&key, uri, list);
                 });
             }
+            "$/progress" => {
+                let token = match &params["token"] {
+                    Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                let value = &params["value"];
+                let text = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_owned);
+                let percentage = value
+                    .get("percentage")
+                    .and_then(Value::as_u64)
+                    .and_then(|p| u32::try_from(p).ok());
+                {
+                    let mut state = lock(&shared.state);
+                    let entry = state
+                        .progress
+                        .iter()
+                        .position(|(k, t, _)| *k == self.key && *t == token);
+                    match (value.get("kind").and_then(Value::as_str), entry) {
+                        (Some("begin"), _) => {
+                            if let Some(i) = entry {
+                                state.progress.remove(i);
+                            }
+                            state.progress.push((
+                                self.key.clone(),
+                                token,
+                                Progress {
+                                    server: self.key.id.clone(),
+                                    title: text("title").unwrap_or_default(),
+                                    message: text("message"),
+                                    percentage,
+                                },
+                            ));
+                        }
+                        (Some("report"), Some(i)) => {
+                            let progress = &mut state.progress[i].2;
+                            if let Some(message) = text("message") {
+                                progress.message = Some(message);
+                            }
+                            progress.percentage = percentage.or(progress.percentage);
+                        }
+                        (Some("end"), Some(i)) => {
+                            state.progress.remove(i);
+                        }
+                        _ => return,
+                    }
+                }
+                shared.host.status_changed();
+            }
             "window/logMessage" | "window/showMessage" => {
                 let message = params.get("message").and_then(Value::as_str).unwrap_or("");
                 shared.host.log(&self.key.id, message);
@@ -1450,7 +1559,7 @@ impl ServerHandler for Handler {
         }
     }
 
-    fn request(
+    fn default_request(
         &self,
         method: &str,
         params: Value,
@@ -1498,6 +1607,79 @@ impl ServerHandler for Handler {
                 | "client/unregisterCapability"
                 | "window/showMessageRequest" => Ok(Value::Null),
                 other => Err(ResponseError::method_not_found(other)),
+            }
+        })
+    }
+}
+
+impl Handler {
+    /// The server's declaration and the methods its plugin intercepts.
+    fn middleware(&self, method: &str) -> Option<(Arc<Shared>, ServerDecl)> {
+        let shared = self.shared.upgrade()?;
+        let decl = lock(&shared.state)
+            .servers
+            .get(&self.key)
+            .map(|s| s.decl.clone())?;
+        shared
+            .host
+            .middleware(&decl)
+            .iter()
+            .any(|m| m == method)
+            .then_some((shared, decl))
+    }
+}
+
+impl ServerHandler for Handler {
+    fn notification(&self, method: &str, params: Value) {
+        let Some((shared, decl)) = self.middleware(method) else {
+            self.default_notification(method, params);
+            return;
+        };
+        // The plugin sees it first; `forward` hands it on (maybe changed).
+        let key = self.key.clone();
+        let encoding = *lock(&self.encoding);
+        let method = method.to_owned();
+        let weak = self.shared.clone();
+        tokio::spawn(async move {
+            match shared.host.intercept(&decl, &method, params).await {
+                Ok(MiddlewareResult::Forward { params }) => {
+                    let handler = Handler {
+                        shared: weak,
+                        key,
+                        encoding: Mutex::new(encoding),
+                    };
+                    handler.default_notification(&method, params);
+                }
+                Ok(MiddlewareResult::Respond { .. }) => {}
+                Err(error) => shared.host.log(&decl.id, &format!("{method}: {error}")),
+            }
+        });
+    }
+
+    fn request(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> BoxFuture<'static, Result<Value, ResponseError>> {
+        let Some((shared, decl)) = self.middleware(method) else {
+            return self.default_request(method, params);
+        };
+        let handler = Handler {
+            shared: self.shared.clone(),
+            key: self.key.clone(),
+            encoding: Mutex::new(*lock(&self.encoding)),
+        };
+        let method = method.to_owned();
+        Box::pin(async move {
+            match shared.host.intercept(&decl, &method, params).await {
+                Ok(MiddlewareResult::Respond { result }) => Ok(result),
+                Ok(MiddlewareResult::Forward { params }) => {
+                    handler.default_request(&method, params).await
+                }
+                Err(message) => Err(ResponseError {
+                    code: -32603,
+                    message,
+                }),
             }
         })
     }

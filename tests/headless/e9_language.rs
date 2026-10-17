@@ -284,3 +284,37 @@ async fn navigation_and_refactoring() {
     language.format(&f.uri, 4, true).await.unwrap();
     assert!(f.text().contains("    amount = 1\n"), "{:?}", f.text());
 }
+
+/// The plugin talks to its server (`lsp/sendRequest`), and answers what the server asks the
+/// client when it declared the method in `lspMiddleware`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_plugin_sends_requests_and_intercepts_server_messages() {
+    let f = Fixture::start().await;
+    let id = kumiko_types::CommandId::new("echo.lsp").unwrap();
+    let args = vec![
+        serde_json::json!("fake"),
+        serde_json::json!("workspace/executeCommand"),
+        serde_json::json!({"command": "fake.ask", "arguments": []}),
+    ];
+    let answer = f.ide.core.commands().execute(&id, args).await.unwrap();
+    assert_eq!(
+        answer,
+        serde_json::json!({"asked": {"answer": 42, "server": "fake"}})
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn server_progress_is_reported() {
+    let f = Fixture::start().await;
+    let language = f.ide.core.language();
+    eventually("progress", || {
+        language.progress().iter().any(|p| {
+            p.server == "fake"
+                && p.title == "Indexing"
+                && p.message.as_deref() == Some("files")
+                && p.percentage == Some(50)
+        })
+    })
+    .await
+    .unwrap();
+}

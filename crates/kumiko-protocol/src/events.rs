@@ -228,3 +228,12 @@ core_event!(
     State,
     "Diagnostics of these files changed."
 );
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct LanguageStatusChanged {}
+core_event!(
+    LanguageStatusChanged,
+    "language.statusChanged",
+    Notification,
+    "Language servers started, stopped or reported progress; read the status again."
+);

@@ -234,12 +234,14 @@ impl CoreApi {
                 None
             }
         };
+        let language_slot = Arc::new(std::sync::OnceLock::new());
         let services = plugins::Services {
             commands: commands.clone(),
             config: config.clone(),
             project: project.clone(),
             events: sink.clone(),
             locale: options.locale.clone(),
+            language: language_slot.clone(),
         };
         let plugins =
             plugins::PluginManager::start(&options.dirs, services, options.plugins.clone(), wasm);
@@ -268,6 +270,7 @@ impl CoreApi {
                 tasks: Mutex::default(),
             }),
         };
+        let _ = language_slot.set(core.inner.language.clone());
         core.spawn_wiring();
         core.spawn_indexer();
         let wiring = language_host::spawn_wiring(&core);

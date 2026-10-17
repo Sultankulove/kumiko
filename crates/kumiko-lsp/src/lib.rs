@@ -12,7 +12,7 @@ pub mod types;
 pub use client::{Client, LspError, ResponseError, ServerHandler};
 pub use encoding::Encoding;
 pub use service::{
-    LanguageHost, LanguageService, MAX_RESTARTS, ServerDecl, ServerKey, ServerStatus,
+    LanguageHost, LanguageService, MAX_RESTARTS, Progress, ServerDecl, ServerKey, ServerStatus,
 };
 pub use types::{
     CodeAction, CompletionItem, CompletionKind, Diagnostic, Highlight, Hover, Location, Severity,

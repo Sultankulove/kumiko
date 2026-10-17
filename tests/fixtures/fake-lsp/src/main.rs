@@ -14,6 +14,8 @@
 //! - formatting: trailing spaces removed;
 //! - document symbols: `class NAME` and `def NAME` lines, nested by indentation;
 //! - signature help: `beta(int a, String b)`, the parameter after as many commas as typed;
+//! - after `initialized`: progress "Indexing", "files", 50 %, never finished;
+//! - the command `fake.ask` asks the client `fake/question` and returns the answer;
 //! - an edit leaving `CRASH` in a document makes the server exit with code 3.
 
 use std::collections::HashMap;
@@ -393,6 +395,16 @@ impl Server {
                 action["edit"] = json!({"changes": {data["uri"].as_str()?: [{"range": data["range"], "newText": "DONE"}]}});
                 action
             }
+            "workspace/executeCommand" if params["command"] == "fake.ask" => {
+                send(&json!({
+                    "jsonrpc": "2.0",
+                    "id": "ask-1",
+                    "method": "fake/question",
+                    "params": {"question": "?"},
+                }));
+                self.executing = Some(id);
+                return None;
+            }
             "workspace/executeCommand" => {
                 let uri = params["arguments"][0].as_str()?.to_owned();
                 send(&json!({
@@ -433,11 +445,13 @@ fn main() {
         match (message.get("id").cloned(), method.as_str()) {
             // The client's answer to our applyEdit: finish the command.
             (Some(id), "") => {
-                if id == "apply-1"
-                    && let Some(command) = server.executing.take()
-                {
-                    let applied = message["result"]["applied"].clone();
-                    send(&json!({"jsonrpc": "2.0", "id": command, "result": {"applied": applied}}));
+                if let Some(command) = server.executing.take() {
+                    let result = if id == "ask-1" {
+                        json!({"asked": message["result"]})
+                    } else {
+                        json!({"applied": message["result"]["applied"]})
+                    };
+                    send(&json!({"jsonrpc": "2.0", "id": command, "result": result}));
                 }
             }
             (Some(id), method) => {
@@ -448,6 +462,15 @@ fn main() {
                 }
             }
             (None, "exit") => return,
+            // Work in progress that never ends: indexing, half done.
+            (None, "initialized") => {
+                send(
+                    &json!({"jsonrpc": "2.0", "method": "$/progress", "params": {"token": "index", "value": {"kind": "begin", "title": "Indexing", "percentage": 0}}}),
+                );
+                send(
+                    &json!({"jsonrpc": "2.0", "method": "$/progress", "params": {"token": "index", "value": {"kind": "report", "message": "files", "percentage": 50}}}),
+                );
+            }
             (None, "textDocument/didOpen") => {
                 let doc = &params["textDocument"];
                 let uri = doc["uri"].as_str().unwrap_or_default().to_owned();

@@ -172,6 +172,7 @@ pub fn core_events() -> Vec<EventInfo> {
         ev::<events::ConfigChanged>(),
         ev::<events::InterfaceAvailabilityChanged>(),
         ev::<events::DiagnosticsChanged>(),
+        ev::<events::LanguageStatusChanged>(),
     ]
 }
 
@@ -219,8 +220,8 @@ mod tests {
             .collect();
         assert_eq!(
             lossy,
-            ["fs.changed"],
-            "only fs.changed is class B (spec, section 11)"
+            ["fs.changed", "language.statusChanged"],
+            "class B: fs.changed, progress and logs (spec, section 11)"
         );
     }
 }

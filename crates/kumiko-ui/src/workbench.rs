@@ -398,6 +398,7 @@ impl Workbench {
             "document.changed",
             "document.saved",
             "language.diagnosticsChanged",
+            "language.statusChanged",
         ];
         let mut events = core.events().subscribe(EventFilter::topics(topics));
         cx.spawn(async move |this, cx| {
@@ -430,6 +431,8 @@ impl Workbench {
         };
         if event.topic.starts_with("document.") {
             self.refresh_dirty(cx);
+        } else if event.topic == "language.statusChanged" {
+            cx.notify();
         } else if event.topic == "language.diagnosticsChanged" {
             self.refresh_problems();
             cx.notify();
@@ -1770,6 +1773,7 @@ impl Workbench {
 
     fn status_bar(&self, rect: Rect, cx: &App) -> AnyElement {
         let p = &self.palette;
+        let p_muted = p.muted;
         let format = self
             .split
             .tabs()
@@ -1804,7 +1808,23 @@ impl Workbench {
             .px_2()
             .text_size(px(12.0))
             .child(message)
-            .child(right)
+            .child(
+                div()
+                    .flex()
+                    .gap_4()
+                    // Language servers at work, as IntelliJ shows background tasks.
+                    .children(self.core.language().progress().into_iter().last().map(|p| {
+                        let mut text = format!("{}: {}", p.server, p.title);
+                        if let Some(message) = p.message {
+                            text.push_str(&format!(" {message}"));
+                        }
+                        if let Some(percent) = p.percentage {
+                            text.push_str(&format!(" {percent}%"));
+                        }
+                        div().text_color(rgba(p_muted)).child(text)
+                    }))
+                    .child(right),
+            )
             .into_any_element()
     }
 

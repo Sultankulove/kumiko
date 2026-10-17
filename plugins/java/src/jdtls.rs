@@ -66,6 +66,8 @@ pub fn arguments(install: &Install, data: &Path) -> Vec<String> {
         "-Dosgi.bundles.defaultStartLevel=4".into(),
         "-Declipse.product=org.eclipse.jdt.ls.core.product".into(),
         "-Dlog.level=ALL".into(),
+        // .project, .classpath and .settings go to the data folder, not into the project.
+        "-Djava.import.generatesMetadataFilesAtProjectRoot=false".into(),
         "-Xmx1G".into(),
         "--add-modules=ALL-SYSTEM".into(),
         "--add-opens".into(),

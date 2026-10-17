@@ -513,17 +513,25 @@ impl EditorView {
                 div().flex().flex_col().children(rows).into_any_element()
             }
             Popup::Actions(actions) => {
-                let rows = actions.actions.iter().enumerate().map(|(n, action)| {
-                    row(("intention", n), n == actions.selected)
-                        .on_click(cx.listener(move |view, _: &ClickEvent, _window, cx| {
-                            if let Some(Popup::Actions(a)) = &mut view.popup {
-                                a.selected = n;
-                            }
-                            view.run_selected_action(cx);
-                        }))
-                        .child(div().text_color(style.warning).child("💡"))
-                        .child(action.title.clone())
-                });
+                // A window of the list around the selection, like completion.
+                let first = actions.selected.saturating_sub(POPUP_ROWS - 1);
+                let rows = actions
+                    .actions
+                    .iter()
+                    .enumerate()
+                    .skip(first)
+                    .take(POPUP_ROWS)
+                    .map(|(n, action)| {
+                        row(("intention", n), n == actions.selected)
+                            .on_click(cx.listener(move |view, _: &ClickEvent, _window, cx| {
+                                if let Some(Popup::Actions(a)) = &mut view.popup {
+                                    a.selected = n;
+                                }
+                                view.run_selected_action(cx);
+                            }))
+                            .child(div().text_color(style.warning).child("💡"))
+                            .child(action.title.clone())
+                    });
                 div().flex().flex_col().children(rows).into_any_element()
             }
             Popup::Signature { label, active } => {

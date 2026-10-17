@@ -117,7 +117,17 @@ fn initialization_options(jdks: &[jdk::Jdk], project: Option<&Path>) -> Value {
         "settings": {
             "java": {
                 "configuration": { "runtimes": runtimes, "updateBuildConfiguration": "automatic" },
-                "import": { "maven": { "enabled": true }, "gradle": { "enabled": false } },
+                "import": {
+                    "maven": { "enabled": true },
+                    "gradle": { "enabled": false },
+                    // .project, .classpath and .settings stay in JDT LS's data folder, not in
+                    // the project (IntelliJ users do not expect them there).
+                    "generatesMetadataFilesAtProjectRoot": false,
+                },
+                // JDK internals are not offered for completion and imports, as in IntelliJ.
+                "completion": {
+                    "filteredTypes": ["java.awt.*", "com.sun.*", "sun.*", "jdk.*", "org.graalvm.*", "io.micrometer.shaded.*"],
+                },
                 "autobuild": { "enabled": true },
             }
         },

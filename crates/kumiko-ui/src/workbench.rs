@@ -41,6 +41,7 @@ use crate::state::{self, GroupState, WorkspaceState};
 use crate::tabs::{Split, Tab, Tabs};
 
 mod language;
+mod search;
 mod tasks;
 use crate::tree::{Entry, FileTree, Row};
 
@@ -121,6 +122,11 @@ pub struct Workbench {
     /// for.
     symbols: Option<(Uri, Vec<kumiko_core::language::Symbol>)>,
     usages: Vec<Item>,
+    /// Find in Files: results so far, the search they belong to, an invalid pattern, options.
+    text_results: Vec<Item>,
+    text_generation: u64,
+    text_error: Option<String>,
+    text_options: search::TextOptions,
     /// Tasks offered by Run Task.
     task_list: Vec<kumiko_core::tasks::Task>,
     language_target: Option<(Uri, kumiko_types::Position)>,
@@ -192,6 +198,10 @@ impl Workbench {
             symbols: None,
             usages: Vec::new(),
             task_list: Vec::new(),
+            text_results: Vec::new(),
+            text_generation: 0,
+            text_error: None,
+            text_options: search::TextOptions::default(),
             language_target: None,
             a11y: None,
             started: Some(started),
@@ -266,6 +276,7 @@ impl Workbench {
             UiCommand::Rename => self.open_rename(cx),
             UiCommand::Reformat => self.reformat(cx),
             UiCommand::RunTask => self.open_tasks(cx),
+            UiCommand::FindInFiles => self.open_find_in_files(cx),
             UiCommand::StopTasks => self.stop_tasks(),
             UiCommand::SelectTheme => {
                 self.open_menu = None;
@@ -802,6 +813,7 @@ impl Workbench {
             Mode::Usages => self.usage_items(&query),
             Mode::Rename => self.rename_items(&query),
             Mode::Tasks => self.task_items(&query),
+            Mode::FindInFiles => self.text_items(&query),
         };
         let items = if items.is_empty() {
             vec![self.note("quickOpen.noResults")]
@@ -810,6 +822,15 @@ impl Workbench {
         };
         if let Some(quick) = &mut self.quick_open {
             quick.set_items(items);
+        }
+    }
+
+    /// Like [`Self::refresh_quick`] for results that grow: the selection stays put.
+    fn refresh_quick_keeping_selection(&mut self) {
+        let selected = self.quick_open.as_ref().map_or(0, |q| q.selected);
+        self.refresh_quick();
+        if let Some(quick) = &mut self.quick_open {
+            quick.selected = selected.min(quick.items.len().saturating_sub(1));
         }
     }
 
@@ -1133,6 +1154,17 @@ impl Workbench {
             _ => {
                 // Text is what the key types; shortcuts go on to the keymap.
                 let shortcut = modifiers.control || modifiers.platform || modifiers.alt;
+                if modifiers.alt
+                    && quick.mode() == Mode::FindInFiles
+                    && self.toggle_text_option(stroke.key.as_str(), cx)
+                {
+                    cx.stop_propagation();
+                    cx.notify();
+                    return;
+                }
+                let Some(quick) = &mut self.quick_open else {
+                    return;
+                };
                 match stroke.key_char.as_deref() {
                     Some(text) if !shortcut => {
                         quick.input.insert(text);
@@ -1146,6 +1178,7 @@ impl Workbench {
         if edited {
             self.refresh_quick();
             self.ensure_symbols(cx);
+            self.start_text_search(cx);
         }
         cx.notify();
     }
@@ -2109,6 +2142,7 @@ impl Workbench {
                 let placeholder = match quick.mode() {
                     Mode::Usages => "usages.placeholder",
                     Mode::Tasks => "tasks.placeholder",
+                    Mode::FindInFiles => "findInFiles.prompt",
                     Mode::Rename => "rename.prompt",
                     Mode::Themes => "quickOpen.themes",
                     _ => "quickOpen.placeholder",
@@ -2120,6 +2154,15 @@ impl Workbench {
                         .child(self.t(placeholder)),
                 )
             });
+        // Find in Files shows its options at the right: Aa W .* (Alt+C/W/X).
+        let input = input.when(quick.mode() == Mode::FindInFiles, |d| {
+            d.child(
+                div()
+                    .ml_auto()
+                    .text_color(rgba(p.muted))
+                    .child(self.text_options_label()),
+            )
+        });
         let first = quick.selected.saturating_sub(QUICK_ROWS - 1);
         let rows = quick
             .items

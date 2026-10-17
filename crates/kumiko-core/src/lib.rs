@@ -440,6 +440,37 @@ impl CoreApi {
         &self.inner.syntax
     }
 
+    /// Find in Files: matches stream in as they are found, at most `limit`; dropping the
+    /// receiver stops the search. Open documents are searched in their current text.
+    pub fn search_text(
+        &self,
+        query: &kumiko_search::text::TextQuery,
+        limit: usize,
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<kumiko_search::text::TextMatch>, String> {
+        let regex = query.compile()?;
+        let files = self.inner.files.files();
+        let open: std::collections::HashMap<kumiko_types::Uri, String> = self
+            .inner
+            .documents
+            .list()
+            .into_iter()
+            .map(|s| (s.uri, s.text.to_string()))
+            .collect();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::task::spawn_blocking(move || {
+            let mut sent = 0;
+            kumiko_search::text::search(&files, &open, &regex, |found| {
+                sent += 1;
+                if tx.send(found).is_err() || sent >= limit {
+                    std::ops::ControlFlow::Break(())
+                } else {
+                    std::ops::ControlFlow::Continue(())
+                }
+            });
+        });
+        Ok(rx)
+    }
+
     /// The Language service (language servers: diagnostics, completion, navigation, fixes).
     pub fn language(&self) -> &kumiko_lsp::LanguageService {
         &self.inner.language

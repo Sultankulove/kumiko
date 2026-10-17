@@ -1,5 +1,5 @@
-//! Search service (spec, section 11): the FileIndex behind Quick Open. Full-text search lands
-//! with E11.
+//! Search service (spec, section 11): the FileIndex behind Quick Open and full-text search
+//! over its files ([`text`]).
 //!
 //! The index lists the files of the workspace folders, respecting `.gitignore` and an
 //! exclusion filter the core supplies (`files.exclude`), and answers fuzzy queries over the
@@ -12,6 +12,8 @@ use std::sync::{Arc, RwLock};
 use kumiko_types::Uri;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
+
+pub mod text;
 
 /// A file in the index.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +73,11 @@ impl FileIndex {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
+    }
+
+    /// Every file, in path order.
+    pub fn files(&self) -> Arc<Vec<IndexedFile>> {
+        self.snapshot()
     }
 
     /// Replaces the index with the files under `roots`. Blocking: walks the file system.

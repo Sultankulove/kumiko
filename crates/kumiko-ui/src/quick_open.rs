@@ -21,6 +21,8 @@ pub enum Mode {
     Rename,
     /// Tasks to run (Alt+Shift+F10).
     Tasks,
+    /// Text in the project's files (Ctrl+Shift+F): the input is the query.
+    FindInFiles,
 }
 
 impl Mode {
@@ -31,7 +33,7 @@ impl Mode {
             Mode::Commands => ">",
             Mode::Line => ":",
             Mode::Symbols => "@",
-            Mode::Themes | Mode::Usages | Mode::Rename | Mode::Tasks => "",
+            Mode::Themes | Mode::Usages | Mode::Rename | Mode::Tasks | Mode::FindInFiles => "",
         }
     }
 }

@@ -3754,6 +3754,7 @@ dependencies = [
  "kumiko-service-api",
  "kumiko-types",
  "nucleo-matcher",
+ "regex",
  "tempfile",
 ]
 

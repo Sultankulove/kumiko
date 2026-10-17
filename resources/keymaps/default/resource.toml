@@ -414,3 +414,7 @@ command = "workbench.runTask"
 [[binding]]
 key = "ctrl+f2"
 command = "workbench.stopTasks"
+
+[[binding]]
+key = "ctrl+shift+f"
+command = "workbench.findInFiles"

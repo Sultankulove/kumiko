@@ -3,6 +3,7 @@
 //! The core starts the server and speaks LSP to it; highlighting needs no server (the grammar
 //! package), so Java files work without JDT LS too.
 
+mod download;
 mod jdk;
 mod jdtls;
 mod maven;
@@ -95,9 +96,14 @@ fn server_install(
             ))
         });
     }
-    cache
-        .and_then(|cache| jdtls::cached(cache).into_iter().next())
-        .ok_or_else(|| failed("JDT LS is not installed; set java.jdtls.path"))
+    let Some(cache) = cache else {
+        return Err(failed("JDT LS is not installed; set java.jdtls.path"));
+    };
+    if let Some(install) = jdtls::cached(cache).into_iter().next() {
+        return Ok(install);
+    }
+    // First start: download the pinned milestone (checked by its SHA-256).
+    download::install(cache).map_err(|e| failed(format!("{e}; or set java.jdtls.path")))
 }
 
 /// Settings JDT LS reads at start: the JDKs of projects, Maven import.
@@ -169,7 +175,12 @@ fn resolve(ctx: &Context, params: &ResolveLaunchParams) -> Result<LaunchSpec, Re
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let plugin = Plugin::new()
-        .language_server("jdtls", |ctx, params| async move { resolve(&ctx, &params) })
+        // Off the plugin's thread: the first start downloads JDT LS.
+        .language_server("jdtls", |ctx, params| async move {
+            tokio::task::spawn_blocking(move || resolve(&ctx, &params))
+                .await
+                .map_err(|e| ResponseError::new(ErrorCode::InternalError, e.to_string()))?
+        })
         // JDT LS reports its state with a notification of its own.
         .lsp_middleware("language/status", |ctx, message| async move {
             let kind = message.params.get("type").and_then(Value::as_str);

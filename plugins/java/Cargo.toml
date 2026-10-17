@@ -14,6 +14,10 @@ workspace = true
 [dependencies]
 kumiko-plugin-sdk = { workspace = true, features = ["process"] }
 serde_json.workspace = true
+ureq.workspace = true
+flate2.workspace = true
+tar.workspace = true
+sha2.workspace = true
 tokio = { workspace = true, features = ["rt", "macros"] }
 
 [dev-dependencies]

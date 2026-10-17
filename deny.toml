@@ -40,6 +40,8 @@ allow = [
     "MPL-2.0",
     # Permissive, BSD-like (libfuzzer-sys via GPUI -> image -> rav1e).
     "NCSA",
+    # Permissive data licence of the Mozilla CA roots (webpki-roots, via ureq in kumiko.java).
+    "CDLA-Permissive-2.0",
 ]
 
 [licenses.private]

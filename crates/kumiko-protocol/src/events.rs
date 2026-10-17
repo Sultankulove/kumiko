@@ -237,3 +237,34 @@ core_event!(
     Notification,
     "Language servers started, stopped or reported progress; read the status again."
 );
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(transparent)]
+pub struct TerminalId(pub u64);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TerminalOpened {
+    pub terminal: TerminalId,
+    pub title: String,
+}
+core_event!(
+    TerminalOpened,
+    "terminal.opened",
+    State,
+    "A terminal started; the UI shows it."
+);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalClosed {
+    pub terminal: TerminalId,
+    pub exit_code: Option<i32>,
+}
+core_event!(
+    TerminalClosed,
+    "terminal.closed",
+    State,
+    "A terminal's shell ended."
+);

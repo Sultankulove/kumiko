@@ -46,3 +46,27 @@ pub trait ProcessControl: Send + Sync {
 pub trait Processes: Send + Sync {
     fn spawn(&self, spec: ProcessSpec) -> Result<SpawnedProcess, ProcessError>;
 }
+
+/// Columns and rows of a pseudo-terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PtySize {
+    pub cols: u16,
+    pub rows: u16,
+}
+
+/// A process in a pseudo-terminal (a shell for the terminal). Its streams are blocking: read
+/// them on a thread of their own.
+pub struct PtyProcess {
+    pub pid: Option<u32>,
+    /// What the process writes to its terminal (stdout and stderr together, with escapes).
+    pub output: Box<dyn std::io::Read + Send>,
+    /// Keys typed into the terminal.
+    pub input: Box<dyn std::io::Write + Send>,
+    pub resize: Box<dyn Fn(PtySize) + Send + Sync>,
+    pub control: Box<dyn ProcessControl>,
+}
+
+/// The pseudo-terminal part of the Process service.
+pub trait PtyProcesses: Send + Sync {
+    fn spawn_pty(&self, spec: ProcessSpec, size: PtySize) -> Result<PtyProcess, ProcessError>;
+}

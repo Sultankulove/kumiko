@@ -51,6 +51,7 @@ mod language_host;
 pub mod output;
 mod plugins;
 pub mod tasks;
+pub mod terminals;
 
 pub use language_host::LANGUAGE_CHANNEL;
 
@@ -124,6 +125,8 @@ struct Inner {
     language: kumiko_lsp::LanguageService,
     processes: Arc<dyn kumiko_service_api::Processes>,
     runs: tasks::Runs,
+    pty: Arc<dyn kumiko_service_api::PtyProcesses>,
+    terminals: terminals::Terminals,
     reindex: Arc<tokio::sync::Notify>,
     plugins: plugins::PluginManager,
     tasks: Mutex<Vec<JoinHandle<()>>>,
@@ -249,8 +252,9 @@ impl CoreApi {
         let plugins =
             plugins::PluginManager::start(&options.dirs, services, options.plugins.clone(), wasm);
 
-        let processes: Arc<dyn kumiko_service_api::Processes> =
-            Arc::new(kumiko_process::ProcessService::new());
+        let process_service = Arc::new(kumiko_process::ProcessService::new());
+        let processes: Arc<dyn kumiko_service_api::Processes> = process_service.clone();
+        let pty: Arc<dyn kumiko_service_api::PtyProcesses> = process_service;
         let core = Self {
             inner: Arc::new_cyclic(|weak| Inner {
                 options,
@@ -270,6 +274,8 @@ impl CoreApi {
                 ),
                 processes,
                 runs: tasks::Runs::default(),
+                pty,
+                terminals: terminals::Terminals::default(),
                 reindex: Arc::new(tokio::sync::Notify::new()),
                 plugins,
                 tasks: Mutex::default(),

@@ -694,6 +694,14 @@ fn all_samples() -> Samples {
         uris: vec![Uri::parse("file:///w/src/A.txt").unwrap()],
     });
     s.event(events::LanguageStatusChanged {});
+    s.event(events::TerminalOpened {
+        terminal: events::TerminalId(1),
+        title: "Local".into(),
+    });
+    s.event(events::TerminalClosed {
+        terminal: events::TerminalId(1),
+        exit_code: Some(0),
+    });
     s
 }
 

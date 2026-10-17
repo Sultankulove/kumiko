@@ -17,7 +17,8 @@ pub use fs::{FileSystem, FsError, WriteOptions};
 pub use kumiko_protocol::events::DeliveryClass;
 pub use kumiko_protocol::methods::fs::{DirEntry, FileKind, FileStat};
 pub use process::{
-    Output, ProcessControl, ProcessError, ProcessSpec, Processes, SpawnedProcess, Stdin,
+    Output, ProcessControl, ProcessError, ProcessSpec, Processes, PtyProcess, PtyProcesses,
+    PtySize, SpawnedProcess, Stdin,
 };
 
 /// Boxed future used by object-safe async trait methods.

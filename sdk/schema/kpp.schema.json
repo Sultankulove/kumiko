@@ -1904,6 +1904,43 @@
       ],
       "type": "object"
     },
+    "TerminalClosed": {
+      "properties": {
+        "exitCode": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "terminal": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "terminal"
+      ],
+      "type": "object"
+    },
+    "TerminalOpened": {
+      "properties": {
+        "terminal": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "terminal",
+        "title"
+      ],
+      "type": "object"
+    },
     "TextEdit": {
       "description": "Replacement of `range` with `new_text`; an empty range inserts, empty text deletes.",
       "properties": {
@@ -2238,6 +2275,20 @@
       "description": "A task execution started.",
       "payload": {
         "$ref": "#/$defs/TaskStarted"
+      }
+    },
+    "terminal.closed": {
+      "class": "state",
+      "description": "A terminal's shell ended.",
+      "payload": {
+        "$ref": "#/$defs/TerminalClosed"
+      }
+    },
+    "terminal.opened": {
+      "class": "state",
+      "description": "A terminal started; the UI shows it.",
+      "payload": {
+        "$ref": "#/$defs/TerminalOpened"
       }
     },
     "workspace.folderAdded": {

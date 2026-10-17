@@ -6,7 +6,12 @@ use kumiko_types::CommandId;
 
 /// A key press as a chord; `None` for a lone modifier key.
 pub fn chord(ctrl: bool, alt: bool, shift: bool, meta: bool, key: &str) -> Option<KeyChord> {
-    let key = key.to_lowercase();
+    // GPUI reports Shift with a symbol key as the shifted symbol without the modifier
+    // (`_` for Shift+-); bindings name the key and Shift, as on a US keyboard.
+    let (key, shift) = match unshifted(key) {
+        Some(base) => (base.to_owned(), true),
+        None => (key.to_lowercase(), shift),
+    };
     if key.is_empty()
         || matches!(
             key.as_str(),
@@ -22,6 +27,37 @@ pub fn chord(ctrl: bool, alt: bool, shift: bool, meta: bool, key: &str) -> Optio
         meta,
         key,
     })
+}
+
+/// The key under a shifted symbol of the US layout.
+fn unshifted(key: &str) -> Option<&'static str> {
+    const PAIRS: &[(&str, &str)] = &[
+        ("_", "-"),
+        ("+", "="),
+        ("{", "["),
+        ("}", "]"),
+        ("|", "\\"),
+        (":", ";"),
+        ("\"", "'"),
+        ("<", ","),
+        (">", "."),
+        ("?", "/"),
+        ("~", "`"),
+        ("!", "1"),
+        ("@", "2"),
+        ("#", "3"),
+        ("$", "4"),
+        ("%", "5"),
+        ("^", "6"),
+        ("&", "7"),
+        ("*", "8"),
+        ("(", "9"),
+        (")", "0"),
+    ];
+    PAIRS
+        .iter()
+        .find(|(shifted, _)| *shifted == key)
+        .map(|(_, base)| *base)
 }
 
 /// `Ctrl+Shift+P`; chords of a sequence are separated by a space.
@@ -78,6 +114,11 @@ mod tests {
     #[test]
     fn chords_and_labels() {
         assert_eq!(chord(true, false, false, false, "shift"), None);
+        assert_eq!(
+            chord(true, false, false, false, "_"),
+            KeyChord::parse("ctrl+shift+-").ok(),
+            "Shift+- arrives as `_`"
+        );
         let pressed = chord(true, false, true, false, "P").unwrap();
         assert_eq!(pressed, KeyChord::parse("ctrl+shift+p").unwrap());
         for (text, shown) in [

@@ -14,3 +14,10 @@ workspace = true
 [dependencies]
 kumiko-types.workspace = true
 kumiko-service-api.workspace = true
+tree-sitter.workspace = true
+tree-sitter-language.workspace = true
+serde_json.workspace = true
+libloading.workspace = true
+ropey.workspace = true
+serde.workspace = true
+tracing.workspace = true

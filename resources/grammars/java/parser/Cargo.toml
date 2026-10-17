@@ -1,0 +1,18 @@
+[package]
+name = "kumiko-grammar-java"
+description = "The Java parser of the kumiko.grammar.java resource package, as a native library."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+tree-sitter-java.workspace = true

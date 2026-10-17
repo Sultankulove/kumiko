@@ -9,6 +9,7 @@ use anyhow::Context as _;
 use kumiko_core::{CoreApi, CoreOptions};
 use kumiko_types::KumikoDirs;
 
+mod editor;
 mod log;
 
 fn main() -> anyhow::Result<()> {
@@ -56,7 +57,12 @@ fn main() -> anyhow::Result<()> {
         });
     }
 
-    kumiko_ui::run(core.clone(), runtime.handle().clone(), started);
+    kumiko_ui::run(
+        core.clone(),
+        runtime.handle().clone(),
+        started,
+        std::rc::Rc::new(editor::Editors),
+    );
     runtime.block_on(core.shutdown());
     Ok(())
 }

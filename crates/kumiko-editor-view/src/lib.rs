@@ -1,3 +1,15 @@
-//! Default EditorView implementation.
+//! The default editor view (L1, spec, section 12): it shows a document of the Document
+//! Service and turns input into transactions. The editing model (selections, movement,
+//! commands, display map) is plain data with tests; the GPUI element draws it.
 //!
-//! Stub created in E0; the implementation lands in a later stage (see docs/spec, section 28).
+//! What was taken from other editors and why: docs/research/editor-prior-art.md.
+
+pub mod carets;
+pub mod display;
+pub mod editing;
+pub mod find;
+pub mod movement;
+pub mod search;
+pub mod selection;
+pub mod text;
+pub mod view;

@@ -14,3 +14,9 @@ workspace = true
 [dependencies]
 kumiko-core.workspace = true
 kumiko-types.workspace = true
+ropey.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
+regex.workspace = true
+gpui.workspace = true
+tokio = { workspace = true, features = ["rt"] }

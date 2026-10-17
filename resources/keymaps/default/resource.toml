@@ -23,11 +23,6 @@ command = "edit.redo"
 when = "editorFocus"
 
 [[binding]]
-key = "ctrl+y"
-command = "edit.redo"
-when = "editorFocus"
-
-[[binding]]
 key = "ctrl+p"
 command = "workbench.quickOpen"
 
@@ -73,3 +68,290 @@ command = "workbench.showCommands"
 [[binding]]
 key = "ctrl+g"
 command = "workbench.gotoLine"
+
+# The editor, as in JetBrains IDEs (Ctrl+Y deletes the line there; redo is Ctrl+Shift+Z).
+[[binding]]
+key = "left"
+command = "editor.cursorLeft"
+when = "editorFocus"
+
+[[binding]]
+key = "right"
+command = "editor.cursorRight"
+when = "editorFocus"
+
+[[binding]]
+key = "up"
+command = "editor.cursorUp"
+when = "editorFocus"
+
+[[binding]]
+key = "down"
+command = "editor.cursorDown"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+left"
+command = "editor.cursorWordLeft"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+right"
+command = "editor.cursorWordRight"
+when = "editorFocus"
+
+[[binding]]
+key = "home"
+command = "editor.cursorLineStart"
+when = "editorFocus"
+
+[[binding]]
+key = "end"
+command = "editor.cursorLineEnd"
+when = "editorFocus"
+
+[[binding]]
+key = "pageup"
+command = "editor.cursorPageUp"
+when = "editorFocus"
+
+[[binding]]
+key = "pagedown"
+command = "editor.cursorPageDown"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+home"
+command = "editor.cursorTop"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+end"
+command = "editor.cursorBottom"
+when = "editorFocus"
+
+[[binding]]
+key = "shift+left"
+command = "editor.selectLeft"
+when = "editorFocus"
+
+[[binding]]
+key = "shift+right"
+command = "editor.selectRight"
+when = "editorFocus"
+
+[[binding]]
+key = "shift+up"
+command = "editor.selectUp"
+when = "editorFocus"
+
+[[binding]]
+key = "shift+down"
+command = "editor.selectDown"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+shift+left"
+command = "editor.selectWordLeft"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+shift+right"
+command = "editor.selectWordRight"
+when = "editorFocus"
+
+[[binding]]
+key = "shift+home"
+command = "editor.selectLineStart"
+when = "editorFocus"
+
+[[binding]]
+key = "shift+end"
+command = "editor.selectLineEnd"
+when = "editorFocus"
+
+[[binding]]
+key = "shift+pageup"
+command = "editor.selectPageUp"
+when = "editorFocus"
+
+[[binding]]
+key = "shift+pagedown"
+command = "editor.selectPageDown"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+shift+home"
+command = "editor.selectTop"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+shift+end"
+command = "editor.selectBottom"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+a"
+command = "editor.selectAll"
+when = "editorFocus"
+
+[[binding]]
+key = "backspace"
+command = "editor.deleteLeft"
+when = "editorFocus"
+
+[[binding]]
+key = "shift+backspace"
+command = "editor.deleteLeft"
+when = "editorFocus"
+
+[[binding]]
+key = "delete"
+command = "editor.deleteRight"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+backspace"
+command = "editor.deleteWordLeft"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+delete"
+command = "editor.deleteWordRight"
+when = "editorFocus"
+
+[[binding]]
+key = "enter"
+command = "editor.newline"
+when = "editorFocus"
+
+[[binding]]
+key = "tab"
+command = "editor.indent"
+when = "editorFocus"
+
+[[binding]]
+key = "shift+tab"
+command = "editor.outdent"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+d"
+command = "editor.duplicate"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+y"
+command = "editor.deleteLine"
+when = "editorFocus"
+
+[[binding]]
+key = "alt+shift+up"
+command = "editor.moveLineUp"
+when = "editorFocus"
+
+[[binding]]
+key = "alt+shift+down"
+command = "editor.moveLineDown"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+c"
+command = "editor.copy"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+insert"
+command = "editor.copy"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+x"
+command = "editor.cut"
+when = "editorFocus"
+
+[[binding]]
+key = "shift+delete"
+command = "editor.cut"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+v"
+command = "editor.paste"
+when = "editorFocus"
+
+[[binding]]
+key = "shift+insert"
+command = "editor.paste"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+alt+shift+up"
+command = "editor.cloneCaretAbove"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+alt+shift+down"
+command = "editor.cloneCaretBelow"
+when = "editorFocus"
+
+[[binding]]
+key = "alt+j"
+command = "editor.selectNextOccurrence"
+when = "editorFocus"
+
+[[binding]]
+key = "alt+shift+j"
+command = "editor.unselectOccurrence"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+alt+shift+j"
+command = "editor.selectAllOccurrences"
+when = "editorFocus"
+
+[[binding]]
+key = "escape"
+command = "editor.escape"
+when = "editorFocus"
+
+
+[[binding]]
+key = "ctrl+f"
+command = "editor.find"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+r"
+command = "editor.replace"
+when = "editorFocus"
+
+[[binding]]
+key = "f3"
+command = "editor.findNext"
+when = "editorFocus"
+
+[[binding]]
+key = "shift+f3"
+command = "editor.findPrevious"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+-"
+command = "editor.fold"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+="
+command = "editor.unfold"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+shift+-"
+command = "editor.foldAll"
+when = "editorFocus"
+
+[[binding]]
+key = "ctrl+shift+="
+command = "editor.unfoldAll"
+when = "editorFocus"

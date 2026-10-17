@@ -271,6 +271,31 @@ impl DocumentService {
         Ok(())
     }
 
+    /// The edits of every version after `version`, oldest first, each in the coordinates of
+    /// the text before it; `None` when the history no longer reaches back that far.
+    pub fn changes_since(
+        &self,
+        id: DocumentId,
+        version: DocumentVersion,
+    ) -> Option<Vec<Vec<TextEdit>>> {
+        let state = lock(&self.state);
+        let doc = state.docs.get(&id)?;
+        if version >= doc.version {
+            return Some(Vec::new());
+        }
+        let first_kept = doc.history.front().map(|(v, _)| v.0)?;
+        if first_kept > version.0 + 1 {
+            return None;
+        }
+        Some(
+            doc.history
+                .iter()
+                .filter(|(v, _)| *v > version)
+                .map(|(_, edits)| edits.clone())
+                .collect(),
+        )
+    }
+
     /// Applies edits computed against `base_version` as one transaction.
     pub fn apply(
         &self,

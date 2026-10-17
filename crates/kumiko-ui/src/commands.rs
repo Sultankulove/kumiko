@@ -25,6 +25,8 @@ pub enum UiCommand {
     /// Pick a colour theme; set one (`workbench.setTheme [id]`).
     SelectTheme,
     SetTheme(String),
+    /// A command of the editor (see `EditorProvider::commands`), for the active editor.
+    Editor(String),
     /// Split the editor area, or join it back.
     Split(Orientation),
     Unsplit,
@@ -94,8 +96,38 @@ fn open_file(args: &[Value]) -> Result<UiCommand, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Registers the workbench commands; their requests arrive on `requests`' receiver.
-pub fn register(core: &CoreApi, requests: &UnboundedSender<UiCommand>) {
+/// Registers the workbench commands and the editor ones; their requests arrive on
+/// `requests`' receiver.
+pub fn register(
+    core: &CoreApi,
+    requests: &UnboundedSender<UiCommand>,
+    editor_commands: &[&'static str],
+) {
+    for &id in editor_commands {
+        let Ok(command_id) = CommandId::new(id) else {
+            continue;
+        };
+        let info = CommandInfo {
+            id: command_id,
+            title: Some(format!("%command.{id}%")),
+            owner: Owner::Core,
+            when: None,
+        };
+        let requests = requests.clone();
+        let handler = Arc::new(move |_args: Vec<Value>| -> CommandFuture {
+            let sent = requests.send(UiCommand::Editor(id.to_owned())).is_ok();
+            Box::pin(async move {
+                if sent {
+                    Ok(Value::Null)
+                } else {
+                    Err(CommandError::Failed("the workbench is closed".into()))
+                }
+            })
+        });
+        if let Err(error) = core.commands().register(info, handler) {
+            tracing::warn!("{error}");
+        }
+    }
     for &(id, parse) in COMMANDS {
         let Ok(command_id) = CommandId::new(id) else {
             continue;

@@ -6,6 +6,7 @@
 use gpui::{
     App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size,
 };
+use std::rc::Rc;
 use std::time::Instant;
 
 use kumiko_core::CoreApi;
@@ -13,6 +14,7 @@ use tokio::runtime::Handle;
 
 mod a11y;
 mod commands;
+pub mod editor;
 mod input;
 mod keys;
 pub mod layout;
@@ -25,15 +27,16 @@ mod tabs;
 mod tree;
 mod workbench;
 
+use editor::EditorProvider;
 use workbench::Workbench;
 
 /// Opens the workbench and runs the UI event loop on the current (main) thread until the
 /// user quits. Core work is spawned on `runtime`; `started` is when the process started, for
 /// the start-up time logged with the first frame.
-pub fn run(core: CoreApi, runtime: Handle, started: Instant) {
+pub fn run(core: CoreApi, runtime: Handle, started: Instant, editors: Rc<dyn EditorProvider>) {
     let (requests, received) = tokio::sync::mpsc::unbounded_channel();
     // The registered handlers hold the senders; the channel lives as long as the core.
-    commands::register(&core, &requests);
+    commands::register(&core, &requests, editors.commands());
     drop(requests);
     let title = core.resources().localize("app.name", &core.locale());
     Application::new().run(move |cx: &mut App| {
@@ -51,7 +54,7 @@ pub fn run(core: CoreApi, runtime: Handle, started: Instant) {
             ..WindowOptions::default()
         };
         let opened = cx.open_window(options, |_, cx| {
-            cx.new(|cx| Workbench::new(core, runtime, received, started, cx))
+            cx.new(|cx| Workbench::new(core, runtime, received, started, editors, cx))
         });
         let window = match opened {
             Ok(window) => window,

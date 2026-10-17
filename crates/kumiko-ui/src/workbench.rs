@@ -4,11 +4,12 @@
 //! [`FileTree`] and [`Tabs`]; this module draws them and routes input to commands.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
 use gpui::{
-    AnyElement, ClickEvent, Context, FocusHandle, FontWeight, HighlightStyle, KeyDownEvent,
+    AnyElement, App, ClickEvent, Context, FocusHandle, FontWeight, HighlightStyle, KeyDownEvent,
     MouseButton, ScrollStrategy, SharedString, StyledText, UniformListScrollHandle, Window, div,
     prelude::*, px, rgba, uniform_list,
 };
@@ -29,6 +30,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::a11y::{AccessNode, AccessTree, Bridge};
 use crate::commands::{NEEDS_ARGUMENTS, UiCommand};
+use crate::editor::{EditorHandle, EditorProvider, EditorTheme};
 use crate::keys;
 use crate::layout::{LayoutState, Rect, Regions, Side, TAB_BAR_HEIGHT, ToolWindow};
 use crate::menus::{self, CommandLookup, Menu};
@@ -49,8 +51,6 @@ const MONOSPACE: &str = "Consolas";
 const MONOSPACE: &str = "DejaVu Sans Mono";
 const UI_TEXT: f32 = 13.0;
 const ROW_HEIGHT: f32 = 20.0;
-const EDITOR_TEXT: f32 = 14.0;
-const EDITOR_LINE: f32 = 19.0;
 /// Results shown at once in Quick Open.
 const QUICK_ROWS: usize = 14;
 
@@ -77,11 +77,12 @@ enum FocusTarget {
     Quick,
 }
 
-/// A file shown in a tab: its document and its lines, as text for display.
+/// A file open in tabs: its document and how it is stored (for the status bar).
 struct OpenFile {
     doc: DocumentId,
-    lines: Arc<Vec<SharedString>>,
     format: String,
+    /// Unsaved changes, shown on the tab.
+    dirty: bool,
 }
 
 pub struct Workbench {
@@ -106,8 +107,9 @@ pub struct Workbench {
     tree_scroll: UniformListScrollHandle,
     split: Split,
     files: HashMap<Uri, OpenFile>,
-    /// Scroll positions of the editor groups (at most two).
-    editor_scrolls: [UniformListScrollHandle; 2],
+    /// Editors by group and file: each group keeps its own carets and scroll.
+    editors: HashMap<(usize, Uri), EditorHandle>,
+    provider: Rc<dyn EditorProvider>,
     /// The last message for the status bar (e.g. a failed command).
     message: Option<String>,
     a11y: Option<Bridge>,
@@ -136,6 +138,7 @@ impl Workbench {
         runtime: Handle,
         requests: UnboundedReceiver<UiCommand>,
         started: Instant,
+        provider: Rc<dyn EditorProvider>,
         cx: &mut Context<Self>,
     ) -> Self {
         let locale = core.locale();
@@ -170,10 +173,8 @@ impl Workbench {
             tree_scroll: UniformListScrollHandle::new(),
             split: Split::default(),
             files: HashMap::new(),
-            editor_scrolls: [
-                UniformListScrollHandle::new(),
-                UniformListScrollHandle::new(),
-            ],
+            editors: HashMap::new(),
+            provider,
             message: None,
             a11y: None,
             started: Some(started),
@@ -245,6 +246,10 @@ impl Workbench {
                 self.focus_request = Some(FocusTarget::Quick);
             }
             UiCommand::SetTheme(id) => self.set_theme(&id),
+            UiCommand::Editor(id) => {
+                self.run_in_editor(&id, cx);
+                self.focus_request = Some(FocusTarget::Editor);
+            }
             UiCommand::CloseEditor => self.close_active_tab(),
             UiCommand::Split(orientation) => self.split.split(orientation),
             UiCommand::Unsplit => self.split.unsplit(),
@@ -313,9 +318,10 @@ impl Workbench {
         }
     }
 
-    fn key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let stroke = &event.keystroke;
         let modifiers = &stroke.modifiers;
+        tracing::debug!(key = ?stroke.key, key_char = ?stroke.key_char, "raw key");
         let Some(chord) = keys::chord(
             modifiers.control,
             modifiers.alt,
@@ -334,11 +340,22 @@ impl Workbench {
         self.pending.push(chord);
         let pressed = KeySequence(self.pending.clone());
         let keymap = self.core.config().keymap();
-        match keymap.resolve(&pressed, self.core.commands().context()) {
+        let resolution = keymap.resolve(&pressed, self.core.commands().context());
+        tracing::debug!(keys = %keys::label(&pressed), ?resolution, "key");
+        match resolution {
             Resolution::Command(id) => {
                 self.pending.clear();
                 cx.stop_propagation();
-                self.execute(id, Vec::new(), cx);
+                // Editor keys go straight to the focused editor: no round trip through the
+                // core runtime on every keystroke.
+                let editor_command = self.provider.commands().contains(&id.as_str());
+                let focused = self
+                    .active_editor()
+                    .is_some_and(|e| e.focus.is_focused(window));
+                if !(editor_command && focused && self.run_in_editor(id.as_str(), cx)) {
+                    self.execute(id, Vec::new(), cx);
+                }
+                cx.notify();
             }
             Resolution::Pending => cx.stop_propagation(),
             Resolution::None => self.pending.clear(),
@@ -356,6 +373,8 @@ impl Workbench {
             "workspace.folderRemoved",
             "config.*",
             "plugin.*",
+            "document.changed",
+            "document.saved",
         ];
         let mut events = core.events().subscribe(EventFilter::topics(topics));
         cx.spawn(async move |this, cx| {
@@ -386,9 +405,11 @@ impl Workbench {
                 return;
             }
         };
-        if event.topic.starts_with("config.") || event.topic.starts_with("plugin.") {
+        if event.topic.starts_with("document.") {
+            self.refresh_dirty(cx);
+        } else if event.topic.starts_with("config.") || event.topic.starts_with("plugin.") {
             if event.topic.starts_with("config.") {
-                self.reload_settings();
+                self.reload_settings(cx);
             }
             self.refresh_problems();
             cx.notify();
@@ -409,6 +430,23 @@ impl Workbench {
             }
         } else {
             self.refresh_roots(cx);
+        }
+    }
+
+    /// Brings the tabs' unsaved markers up to date with the documents.
+    fn refresh_dirty(&mut self, cx: &mut Context<Self>) {
+        let mut changed = false;
+        for file in self.files.values_mut() {
+            let dirty = self
+                .core
+                .documents()
+                .snapshot(file.doc)
+                .is_ok_and(|s| s.dirty);
+            changed |= dirty != file.dirty;
+            file.dirty = dirty;
+        }
+        if changed {
+            cx.notify();
         }
     }
 
@@ -552,8 +590,8 @@ impl Workbench {
                             .insert(uri.clone(), OpenFile::new(&snapshot));
                         workbench.split.tabs_mut().open(uri, title);
                         workbench.save_state();
-                        workbench.editor_scrolls[workbench.split.active_group()]
-                            .scroll_to_item(0, ScrollStrategy::Top);
+                        // The editor exists only now: focus it on the next frame.
+                        workbench.focus_request = Some(FocusTarget::Editor);
                         workbench.publish_context();
                     }
                     Ok(Err(error)) => {
@@ -573,7 +611,9 @@ impl Workbench {
 
     /// Closes the active tab; the document closes once no group shows the file.
     fn close_active_tab(&mut self) {
-        if let Some(tab) = self.split.close_active()
+        let closed = self.split.close_active();
+        self.prune_editors();
+        if let Some(tab) = closed
             && !self.split.holds(&tab.uri)
             && let Some(file) = self.files.remove(&tab.uri)
             && let Err(error) = self.core.documents().close(file.doc)
@@ -582,6 +622,91 @@ impl Workbench {
         }
         if self.split.tabs().len() == 0 {
             self.focus_request = Some(FocusTarget::Project);
+        }
+    }
+
+    /// Drops editors whose tab is gone (closed, or its group merged away).
+    fn prune_editors(&mut self) {
+        let groups = self.split.groups();
+        self.editors.retain(|(g, uri), _| {
+            groups
+                .get(*g)
+                .is_some_and(|tabs| tabs.position(uri).is_some())
+        });
+    }
+
+    /// Creates the editors of the groups' active tabs once their documents are open.
+    fn ensure_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.prune_editors();
+        let wanted: Vec<(usize, Uri)> = self
+            .split
+            .groups()
+            .iter()
+            .enumerate()
+            .filter_map(|(g, tabs)| tabs.active().map(|t| (g, t.uri.clone())))
+            .filter(|key| !self.editors.contains_key(key))
+            .collect();
+        for key in wanted {
+            let Some(file) = self.files.get(&key.1) else {
+                continue;
+            };
+            let Ok(snapshot) = self.core.documents().snapshot(file.doc) else {
+                continue;
+            };
+            let theme = self.editor_theme();
+            let handle =
+                self.provider
+                    .open(&self.core, &self.runtime, &snapshot, theme, window, cx);
+            self.editors.insert(key, handle);
+        }
+    }
+
+    /// The editor of the active group's active tab.
+    fn active_editor(&self) -> Option<&EditorHandle> {
+        let tab = self.split.tabs().active()?;
+        self.editors
+            .get(&(self.split.active_group(), tab.uri.clone()))
+    }
+
+    /// Editor colours from the theme, font from the settings.
+    fn editor_theme(&self) -> EditorTheme {
+        let p = &self.palette;
+        let config = self.core.config();
+        let family = config
+            .get("editor.fontFamily", None)
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .filter(|f| !f.is_empty() && f != "monospace")
+            .unwrap_or_else(|| MONOSPACE.to_owned());
+        let font_size = config
+            .get("editor.fontSize", None)
+            .and_then(|v| v.as_f64())
+            .unwrap_or(14.0) as f32;
+        EditorTheme {
+            background: p.editor,
+            foreground: p.editor_foreground,
+            gutter: p.editor_gutter,
+            line_number: p.line_number,
+            line_number_active: p.line_number_active,
+            line_highlight: p.line_highlight,
+            selection: p.editor_selection,
+            caret: p.caret,
+            find_match: p.find_match,
+            syntax: p
+                .syntax
+                .iter()
+                .map(|s| (s.capture.clone(), s.color, s.bold, s.italic))
+                .collect(),
+            font_family: family,
+            font_size,
+            line_height: (font_size * 1.4).round(),
+        }
+    }
+
+    /// Runs an editor command in the active editor; `false` without one.
+    fn run_in_editor(&self, command: &str, cx: &mut Context<Self>) -> bool {
+        match self.active_editor() {
+            Some(editor) => (editor.run)(command, cx),
+            None => false,
         }
     }
 
@@ -752,7 +877,12 @@ impl Workbench {
         };
         match quick_open::parse_line(query) {
             Some(line) => {
-                let line = line.min(file.lines.len().max(1));
+                let lines = self
+                    .core
+                    .documents()
+                    .snapshot(file.doc)
+                    .map_or(1, |s| s.text.len_lines());
+                let line = line.min(lines.max(1));
                 vec![Item {
                     label: self
                         .t("quickOpen.gotoLine")
@@ -824,10 +954,14 @@ impl Workbench {
     }
 
     /// Settings the workbench shows changed: colours, language, menus.
-    fn reload_settings(&mut self) {
+    fn reload_settings(&mut self, cx: &mut Context<Self>) {
         self.palette = palette(&self.core);
         self.locale = self.core.locale();
         self.menus = self.build_menus();
+        let theme = self.editor_theme();
+        for editor in self.editors.values() {
+            (editor.set_theme)(theme.clone(), cx);
+        }
     }
 
     fn choose(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -851,8 +985,12 @@ impl Workbench {
             Action::SetTheme(id) => {
                 self.execute_id("workbench.setTheme", vec![Value::from(id)], cx)
             }
-            Action::GotoLine(line) => self.editor_scrolls[self.split.active_group()]
-                .scroll_to_item(line.saturating_sub(1), ScrollStrategy::Center),
+            Action::GotoLine(line) => {
+                if let Some(editor) = self.active_editor() {
+                    (editor.goto_line)(line, cx);
+                }
+                self.focus_request = Some(FocusTarget::Editor);
+            }
             Action::None => {}
         }
         cx.notify();
@@ -1322,18 +1460,6 @@ impl Workbench {
 
 impl OpenFile {
     fn new(snapshot: &Snapshot) -> Self {
-        let mut lines: Vec<SharedString> = snapshot
-            .text
-            .lines()
-            .map(|line| {
-                let text = line.to_string();
-                SharedString::from(text.trim_end_matches(['\n', '\r']).to_owned())
-            })
-            .collect();
-        // A trailing newline yields an empty last line; editors do not show it as a line.
-        if lines.len() > 1 && lines.last().is_some_and(|l| l.is_empty()) {
-            lines.pop();
-        }
         let encoding = match snapshot.format.encoding {
             Encoding::Utf8 => "UTF-8",
             Encoding::Utf8Bom => "UTF-8 BOM",
@@ -1347,8 +1473,8 @@ impl OpenFile {
         };
         Self {
             doc: snapshot.id,
-            lines: Arc::new(lines),
             format: format!("{ending}   {encoding}"),
+            dirty: snapshot.dirty,
         }
     }
 }
@@ -1414,6 +1540,7 @@ fn place(rect: Rect) -> gpui::Div {
 
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.ensure_editors(window, cx);
         if self.shown
             && let Some(started) = self.started.take()
         {
@@ -1428,12 +1555,16 @@ impl Render for Workbench {
                     self.project_focus.focus(window)
                 }
                 FocusTarget::Quick if self.quick_open.is_some() => self.quick_focus.focus(window),
-                _ => self.editor_focus.focus(window),
+                _ => match self.active_editor() {
+                    Some(editor) => editor.focus.focus(window),
+                    None => self.editor_focus.focus(window),
+                },
             }
         }
         let focus = (
             self.project_focus.is_focused(window),
-            self.editor_focus.is_focused(window),
+            self.active_editor()
+                .is_some_and(|e| e.focus.is_focused(window)),
         );
         if self.published_focus != Some(focus) {
             self.published_focus = Some(focus);
@@ -1474,7 +1605,7 @@ impl Render for Workbench {
             )
             .child(self.stripe(Side::Bottom, regions.bottom_stripe, cx))
             .child(self.editor_area(regions.editor, cx))
-            .child(self.status_bar(regions.status_bar));
+            .child(self.status_bar(regions.status_bar, cx));
         if let (Some(rect), Some(tool)) = (regions.left_panel, self.layout.left) {
             root = root.child(self.tool_window(tool, rect, cx));
         }
@@ -1543,14 +1674,30 @@ impl Workbench {
             .into_any_element()
     }
 
-    fn status_bar(&self, rect: Rect) -> AnyElement {
+    fn status_bar(&self, rect: Rect, cx: &App) -> AnyElement {
         let p = &self.palette;
-        let right = self
+        let format = self
             .split
             .tabs()
             .active()
             .and_then(|t| self.files.get(&t.uri))
-            .map(|f| format!("{}   {}", f.lines.len(), f.format))
+            .map(|f| f.format.clone());
+        let status = self.active_editor().map(|e| (e.status)(cx));
+        // As IntelliJ: `line:column`, the number of carets when several, line ending, encoding.
+        let right = match (&status, format) {
+            (Some(s), Some(format)) => {
+                let carets = if s.carets > 1 {
+                    format!("{} carets   ", s.carets)
+                } else {
+                    String::new()
+                };
+                format!("{carets}{}:{}   {format}", s.line, s.column)
+            }
+            _ => String::new(),
+        };
+        let message = status
+            .and_then(|s| s.message)
+            .or_else(|| self.message.clone())
             .unwrap_or_default();
         place(rect)
             .bg(rgba(p.status_bar))
@@ -1562,7 +1709,7 @@ impl Workbench {
             .justify_between()
             .px_2()
             .text_size(px(12.0))
-            .child(self.message.clone().unwrap_or_default())
+            .child(message)
             .child(right)
             .into_any_element()
     }
@@ -2138,7 +2285,12 @@ impl Workbench {
                     this.save_state();
                     cx.notify();
                 }))
-                .child(tab.title.clone())
+                // "*Name" for unsaved changes, as IntelliJ's "Mark modified" does.
+                .child(if self.files.get(&tab.uri).is_some_and(|f| f.dirty) {
+                    format!("*{}", tab.title)
+                } else {
+                    tab.title.clone()
+                })
                 .child(
                     div()
                         .id(("close", g * 10_000 + i))
@@ -2163,10 +2315,16 @@ impl Workbench {
             .children(tab_items);
         let body = tabs
             .active()
-            .and_then(|tab| self.files.get(&tab.uri))
+            .and_then(|tab| self.editors.get(&(g, tab.uri.clone())))
             .map_or_else(
-                || div().into_any_element(),
-                |file| self.file_view(g, file, cx),
+                || div().flex_1().into_any_element(),
+                |editor| {
+                    div()
+                        .flex_1()
+                        .overflow_hidden()
+                        .child(editor.view.clone())
+                        .into_any_element()
+                },
             );
         place(rect)
             .id(("editor-group", g))
@@ -2187,48 +2345,6 @@ impl Workbench {
             .child(tab_bar)
             .child(body)
             .into_any_element()
-    }
-
-    /// A read-only view of the file's lines; editing comes with the editor view (E8).
-    fn file_view(&self, group: usize, file: &OpenFile, cx: &mut Context<Self>) -> AnyElement {
-        let lines = file.lines.clone();
-        let digits = lines.len().max(1).to_string().len();
-        let gutter = 16.0 + digits as f32 * 8.5;
-        uniform_list(
-            ("file-view", group),
-            lines.len(),
-            cx.processor(move |this, range: std::ops::Range<usize>, _window, _cx| {
-                let p = &this.palette;
-                range
-                    .map(|i| {
-                        div()
-                            .id(i)
-                            .h(px(EDITOR_LINE))
-                            .flex()
-                            .whitespace_nowrap()
-                            .child(
-                                div()
-                                    .w(px(gutter))
-                                    .flex_none()
-                                    .pr_2()
-                                    .flex()
-                                    .justify_end()
-                                    .bg(rgba(p.panel))
-                                    .text_color(rgba(p.muted))
-                                    .child(format!("{}", i + 1)),
-                            )
-                            .child(div().pl_2().child(lines[i].clone()))
-                    })
-                    .collect::<Vec<_>>()
-            }),
-        )
-        .track_scroll(self.editor_scrolls[group].clone())
-        .flex_1()
-        .w_full()
-        .font_family(MONOSPACE)
-        .text_size(px(EDITOR_TEXT))
-        .text_color(rgba(self.palette.editor_foreground))
-        .into_any_element()
     }
 
     fn empty_editor(&self) -> AnyElement {

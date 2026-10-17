@@ -33,8 +33,8 @@ use kumiko_protocol::methods::lifecycle::{
     Exit, Initialize, InitializeParams, InitializeResult, Initialized, PluginCapabilities, Shutdown,
 };
 use kumiko_protocol::methods::lsp::{
-    LaunchSpec, LspMessageParams, LspMiddleware, LspSendRequest, MiddlewareResult, ResolveLaunch,
-    ResolveLaunchParams,
+    LaunchSpec, LspApplyEdit, LspApplyEditParams, LspMessageParams, LspMiddleware, LspSendRequest,
+    MiddlewareResult, ResolveLaunch, ResolveLaunchParams,
 };
 use kumiko_protocol::methods::service::{ServiceCall, ServiceCallParams, ServiceInvoke};
 use kumiko_protocol::{ErrorCode, ResponseError};
@@ -111,6 +111,21 @@ impl Context {
             .request::<SetContext>(&SetContextParams {
                 key: key.into(),
                 value,
+            })
+            .await
+    }
+
+    /// Applies an LSP workspace edit of one of its language servers (`lsp/applyEdit`), e.g. for a
+    /// client-side command; `true` when every change was applied.
+    pub async fn lsp_apply_edit(
+        &self,
+        server_id: impl Into<String>,
+        edit: Value,
+    ) -> Result<bool, RpcError> {
+        self.peer
+            .request::<LspApplyEdit>(&LspApplyEditParams {
+                server_id: server_id.into(),
+                edit,
             })
             .await
     }

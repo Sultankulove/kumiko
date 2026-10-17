@@ -153,6 +153,13 @@ async fn with_jdt_ls_completion_diagnostics_definition_and_quick_fix() {
     })
     .await;
 
+    // The plugin follows JDT LS's own status notification (middleware).
+    let context = p.ide.core.commands().context();
+    until("java.serverReady", slow, async || {
+        context.get("java.serverReady") == Some(serde_json::json!(true))
+    })
+    .await;
+
     // Criterion 7: members of System.out.
     let items = language.completion(&p.uri, Position::new(6, 19)).await;
     assert!(

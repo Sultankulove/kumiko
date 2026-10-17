@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use kumiko_plugin_sdk::process::{Context, Plugin};
-use kumiko_plugin_sdk::protocol::methods::lsp::{LaunchSpec, ResolveLaunchParams};
+use kumiko_plugin_sdk::protocol::methods::lsp::{
+    LaunchSpec, MiddlewareResult, ResolveLaunchParams,
+};
 use kumiko_plugin_sdk::{ErrorCode, ResponseError};
 use serde_json::{Value, json};
 
@@ -156,6 +158,33 @@ fn resolve(ctx: &Context, params: &ResolveLaunchParams) -> Result<LaunchSpec, Re
 async fn main() -> ExitCode {
     let plugin = Plugin::new()
         .language_server("jdtls", |ctx, params| async move { resolve(&ctx, &params) })
+        // JDT LS reports its state with a notification of its own.
+        .lsp_middleware("language/status", |ctx, message| async move {
+            let kind = message.params.get("type").and_then(Value::as_str);
+            let ready = matches!(kind, Some("Started" | "ServiceReady"));
+            if let Err(error) = ctx.set_context("java.serverReady", json!(ready)).await {
+                eprintln!("kumiko-java: {error}");
+            }
+            Ok(MiddlewareResult::Respond {
+                result: Value::Null,
+            })
+        })
+        // Client-side commands of JDT LS: the editor is the client, so they are ours.
+        .lsp_middleware("workspace/executeCommand", |ctx, message| async move {
+            let command = message.params.get("command").and_then(Value::as_str);
+            if command != Some("java.apply.workspaceEdit") {
+                return Ok(MiddlewareResult::Forward {
+                    params: message.params,
+                });
+            }
+            let edit = message.params["arguments"][0].clone();
+            ctx.lsp_apply_edit(message.server_id, edit)
+                .await
+                .map_err(|e| ResponseError::new(ErrorCode::InternalError, e.to_string()))?;
+            Ok(MiddlewareResult::Respond {
+                result: Value::Null,
+            })
+        })
         .command("java.showJdks", |ctx, _args| async move {
             let settings = Settings::read(&ctx.params().config);
             let jdks = jdk::detect(&jdk::Sources::from_env(settings.jdks));

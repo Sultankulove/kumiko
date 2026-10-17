@@ -18,7 +18,7 @@ use kumiko_project::ProjectService;
 use kumiko_protocol::common::CommandCall;
 use kumiko_protocol::events::{InterfaceAvailabilityChanged, PluginState, PluginStateChanged};
 use kumiko_protocol::methods::lifecycle::{PluginStorage, WorkspaceInfo};
-use kumiko_protocol::methods::lsp::LspMessageParams;
+use kumiko_protocol::methods::lsp::{LspApplyEditParams, LspMessageParams};
 use kumiko_protocol::{ErrorCode, ResponseError};
 use kumiko_service_api::wasm::WasmRuntime;
 use kumiko_service_api::when::WhenExpr;
@@ -338,6 +338,24 @@ struct CoreHostApi {
 }
 
 impl HostApi for CoreHostApi {
+    fn lsp_apply_edit(
+        &self,
+        caller: &PluginId,
+        params: LspApplyEditParams,
+    ) -> BoxFuture<'static, Result<bool, ResponseError>> {
+        let language = self.language.get().cloned();
+        let caller = caller.to_string();
+        Box::pin(async move {
+            let language = language.ok_or_else(|| {
+                ResponseError::new(ErrorCode::InternalError, "the core is starting")
+            })?;
+            language
+                .apply_server_edit(&caller, &params.server_id, params.edit)
+                .await
+                .map_err(|e| ResponseError::new(ErrorCode::InvalidParams, e))
+        })
+    }
+
     fn lsp_send_request(
         &self,
         caller: &PluginId,

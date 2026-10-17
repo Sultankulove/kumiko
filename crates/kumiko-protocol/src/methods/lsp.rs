@@ -76,3 +76,20 @@ request!(
     Value,
     "Send a request to a running language server."
 );
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LspApplyEditParams {
+    pub server_id: String,
+    /// An LSP `WorkspaceEdit`, positions in the server's encoding.
+    pub edit: Value,
+}
+
+request!(
+    LspApplyEdit,
+    "lsp/applyEdit",
+    PluginToHost,
+    LspApplyEditParams,
+    bool,
+    "Apply a workspace edit of a language server, e.g. for a client-side command."
+);

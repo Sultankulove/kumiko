@@ -798,6 +798,21 @@
       ],
       "type": "object"
     },
+    "LspApplyEditParams": {
+      "properties": {
+        "edit": {
+          "description": "An LSP `WorkspaceEdit`, positions in the server's encoding."
+        },
+        "serverId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "serverId",
+        "edit"
+      ],
+      "type": "object"
+    },
     "LspMessageParams": {
       "properties": {
         "method": {
@@ -2558,6 +2573,17 @@
       "kind": "notification",
       "params": {
         "type": "null"
+      }
+    },
+    "lsp/applyEdit": {
+      "description": "Apply a workspace edit of a language server, e.g. for a client-side command.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/LspApplyEditParams"
+      },
+      "result": {
+        "type": "boolean"
       }
     },
     "lsp/middleware/request": {

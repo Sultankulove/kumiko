@@ -596,6 +596,13 @@ fn all_samples() -> Samples {
         },
     );
     s.req::<lsp::LspSendRequest>(lsp_message, json!([1, 2, 3]));
+    s.req::<lsp::LspApplyEdit>(
+        lsp::LspApplyEditParams {
+            server_id: "jdtls".into(),
+            edit: json!({"changes": {}}),
+        },
+        true,
+    );
 
     // service
     let interface = InterfaceId::new("org.example.repository").unwrap();

@@ -32,8 +32,8 @@ use kumiko_protocol::methods::lifecycle::{
     Exit, HostCapabilities, Initialize, InitializeParams, Initialized, Shutdown, WorkspaceInfo,
 };
 use kumiko_protocol::methods::lsp::{
-    LaunchSpec, LspMessageParams, LspMiddleware, LspSendRequest, MiddlewareResult, ResolveLaunch,
-    ResolveLaunchParams,
+    LaunchSpec, LspApplyEdit, LspApplyEditParams, LspMessageParams, LspMiddleware, LspSendRequest,
+    MiddlewareResult, ResolveLaunch, ResolveLaunchParams,
 };
 use kumiko_protocol::methods::service::{
     ServiceCall, ServiceCallParams, ServiceInvoke, ServiceInvokeParams,
@@ -68,6 +68,13 @@ pub trait HostApi: Send + Sync + 'static {
 
     /// The user's choice among several providers (`interfaces.<id>.provider`).
     fn preferred_provider(&self, interface: &InterfaceId) -> Option<PluginId>;
+
+    /// `lsp/applyEdit`: a workspace edit of a server the plugin contributes.
+    fn lsp_apply_edit(
+        &self,
+        caller: &PluginId,
+        params: LspApplyEditParams,
+    ) -> BoxFuture<'static, Result<bool, ResponseError>>;
 
     /// `lsp/sendRequest`: a request to a language server the plugin contributes.
     fn lsp_send_request(
@@ -659,6 +666,7 @@ impl PluginHost {
                     SetContext::METHOD.into(),
                     ServiceCall::METHOD.into(),
                     LspSendRequest::METHOD.into(),
+                    LspApplyEdit::METHOD.into(),
                 ],
                 experimental: None,
             },
@@ -1076,6 +1084,13 @@ impl Bridge {
                         result(())
                     }),
             ),
+            LspApplyEdit::METHOD => match params(method, request) {
+                Ok(call) => {
+                    let applied = self.api.lsp_apply_edit(&plugin, call);
+                    Box::pin(async move { applied.await.and_then(result) })
+                }
+                Err(error) => ready(Err(error)),
+            },
             LspSendRequest::METHOD => match params(method, request) {
                 Ok(call) => self.api.lsp_send_request(&plugin, call),
                 Err(error) => ready(Err(error)),

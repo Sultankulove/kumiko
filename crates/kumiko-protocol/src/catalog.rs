@@ -146,6 +146,7 @@ pub fn catalog() -> Vec<MethodInfo> {
         req::<lsp::ResolveLaunch>(),
         req::<lsp::LspMiddleware>(),
         req::<lsp::LspSendRequest>(),
+        req::<lsp::LspApplyEdit>(),
         req::<service::ServiceCall>(),
         req::<service::ServiceInvoke>(),
         notif::<base::CancelRequest>(),

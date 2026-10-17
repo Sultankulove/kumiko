@@ -1437,6 +1437,49 @@
       ],
       "type": "object"
     },
+    "RunParams": {
+      "properties": {
+        "input": {
+          "default": null,
+          "description": "Written to the process input, which is then closed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spec": {
+          "$ref": "#/$defs/ProcessSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "RunResult": {
+      "properties": {
+        "exitCode": {
+          "description": "`null` when killed by a signal.",
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "stdout": {
+          "description": "Output as UTF-8 (invalid bytes replaced), each cut at 8 MiB.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stdout",
+        "stderr"
+      ],
+      "type": "object"
+    },
     "SavedState": {
       "properties": {
         "state": {
@@ -2130,6 +2173,25 @@
       ],
       "type": "object"
     },
+    "UiChanged": {
+      "properties": {
+        "view": {
+          "description": "The view of a `tree` change.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "what": {
+          "description": "`tree`, `decorations` or `status`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "what"
+      ],
+      "type": "object"
+    },
     "UnsubscribeParams": {
       "properties": {
         "subscription": {
@@ -2319,6 +2381,13 @@
       "description": "A terminal started; the UI shows it.",
       "payload": {
         "$ref": "#/$defs/TerminalOpened"
+      }
+    },
+    "ui.changed": {
+      "class": "state",
+      "description": "A plugin changed its declarative UI (a view's tree, file decorations, status items).",
+      "payload": {
+        "$ref": "#/$defs/UiChanged"
       }
     },
     "workspace.folderAdded": {
@@ -2726,6 +2795,17 @@
       },
       "result": {
         "type": "null"
+      }
+    },
+    "process/run": {
+      "description": "Run a process to its end and return its output (for short commands, e.g. a status query).",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/RunParams"
+      },
+      "result": {
+        "$ref": "#/$defs/RunResult"
       }
     },
     "process/spawn": {

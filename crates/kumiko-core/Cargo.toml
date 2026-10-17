@@ -30,6 +30,7 @@ kumiko-resources.workspace = true
 kumiko-plugin-host.workspace = true
 kumiko-wasm-host.workspace = true
 serde_json.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 tracing.workspace = true

@@ -19,6 +19,7 @@ use kumiko_protocol::common::CommandCall;
 use kumiko_protocol::events::{InterfaceAvailabilityChanged, PluginState, PluginStateChanged};
 use kumiko_protocol::methods::lifecycle::{PluginStorage, WorkspaceInfo};
 use kumiko_protocol::methods::lsp::{LspApplyEditParams, LspMessageParams};
+use kumiko_protocol::methods::process::{RunParams, RunResult};
 use kumiko_protocol::methods::terminal::{TerminalOpenParams, TerminalOpenResult};
 use kumiko_protocol::{ErrorCode, ResponseError};
 use kumiko_service_api::wasm::WasmRuntime;
@@ -343,6 +344,60 @@ struct CoreHostApi {
 }
 
 impl HostApi for CoreHostApi {
+    fn ui_call(
+        &self,
+        caller: &PluginId,
+        method: &str,
+        params: Value,
+    ) -> BoxFuture<'static, Result<Value, ResponseError>> {
+        let core = self
+            .core
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .map(|inner| crate::CoreApi { inner });
+        let (caller, method) = (caller.clone(), method.to_owned());
+        Box::pin(async move {
+            let core = core.ok_or_else(|| {
+                ResponseError::new(ErrorCode::InternalError, "the core is starting")
+            })?;
+            core.ui_call(caller, &method, params).await
+        })
+    }
+
+    fn run_process(
+        &self,
+        caller: &PluginId,
+        params: RunParams,
+    ) -> BoxFuture<'static, Result<RunResult, ResponseError>> {
+        let core = self
+            .core
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .map(|inner| crate::CoreApi { inner });
+        let owner = caller.to_string();
+        Box::pin(async move {
+            let core = core.ok_or_else(|| {
+                ResponseError::new(ErrorCode::InternalError, "the core is starting")
+            })?;
+            let spec = kumiko_service_api::ProcessSpec {
+                command: params.spec.command,
+                args: params.spec.args,
+                cwd: params.spec.cwd.map(std::path::PathBuf::from),
+                env: params.spec.env,
+                owner,
+            };
+            let ran = core
+                .run_process(spec, params.input)
+                .await
+                .map_err(|e| ResponseError::new(ErrorCode::NotFound, e))?;
+            Ok(RunResult {
+                exit_code: ran.exit_code,
+                stdout: ran.stdout,
+                stderr: ran.stderr,
+            })
+        })
+    }
+
     fn open_terminal(
         &self,
         caller: &PluginId,

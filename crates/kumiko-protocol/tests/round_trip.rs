@@ -519,6 +519,21 @@ fn all_samples() -> Samples {
         },
         (),
     );
+    s.req::<process::Run>(
+        process::RunParams {
+            spec: spec(),
+            input: Some(
+                "y
+"
+                .into(),
+            ),
+        },
+        process::RunResult {
+            exit_code: Some(0),
+            stdout: "ok".into(),
+            stderr: String::new(),
+        },
+    );
     s.req::<terminal::TerminalOpen>(
         terminal::TerminalOpenParams {
             title: "Local".into(),
@@ -710,6 +725,10 @@ fn all_samples() -> Samples {
     s.event(events::TerminalClosed {
         terminal: events::TerminalId(1),
         exit_code: Some(0),
+    });
+    s.event(events::UiChanged {
+        what: "tree".into(),
+        view: Some("sample.changes".into()),
     });
     s
 }

@@ -35,6 +35,7 @@ use kumiko_protocol::methods::lsp::{
     LaunchSpec, LspApplyEdit, LspApplyEditParams, LspMessageParams, LspMiddleware, LspSendRequest,
     MiddlewareResult, ResolveLaunch, ResolveLaunchParams,
 };
+use kumiko_protocol::methods::process::{Run, RunParams, RunResult};
 use kumiko_protocol::methods::service::{
     ServiceCall, ServiceCallParams, ServiceInvoke, ServiceInvokeParams,
 };
@@ -72,6 +73,21 @@ pub trait HostApi: Send + Sync + 'static {
 
     /// The user's choice among several providers (`interfaces.<id>.provider`).
     fn preferred_provider(&self, interface: &InterfaceId) -> Option<PluginId>;
+
+    /// `ui/*`: declarative UI and questions to the user.
+    fn ui_call(
+        &self,
+        caller: &PluginId,
+        method: &str,
+        params: Value,
+    ) -> BoxFuture<'static, Result<Value, ResponseError>>;
+
+    /// `process/run`: a process run to its end.
+    fn run_process(
+        &self,
+        caller: &PluginId,
+        params: RunParams,
+    ) -> BoxFuture<'static, Result<RunResult, ResponseError>>;
 
     /// `terminal/open`: a terminal session in the IDE.
     fn open_terminal(
@@ -705,6 +721,14 @@ impl PluginHost {
                     LspSendRequest::METHOD.into(),
                     LspApplyEdit::METHOD.into(),
                     TerminalOpen::METHOD.into(),
+                    Run::METHOD.into(),
+                    "ui/tree/setModel".into(),
+                    "ui/tree/update".into(),
+                    "ui/fileDecorations".into(),
+                    "ui/setStatusItem".into(),
+                    "ui/showInput".into(),
+                    "ui/showQuickPick".into(),
+                    "ui/showMessage".into(),
                 ],
                 experimental: None,
             },
@@ -1122,6 +1146,14 @@ impl Bridge {
                         result(())
                     }),
             ),
+            ui if ui.starts_with("ui/") => self.api.ui_call(&plugin, ui, request),
+            Run::METHOD => match params(method, request) {
+                Ok(call) => {
+                    let ran = self.api.run_process(&plugin, call);
+                    Box::pin(async move { ran.await.and_then(result) })
+                }
+                Err(error) => ready(Err(error)),
+            },
             TerminalOpen::METHOD => match params(method, request) {
                 Ok(call) => {
                     let opened = self.api.open_terminal(&plugin, call);

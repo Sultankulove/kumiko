@@ -175,3 +175,68 @@ impl CoreApi {
         list
     }
 }
+
+/// Output kept of each stream of [`CoreApi::run_process`].
+const MAX_RUN_OUTPUT: usize = 8 * 1024 * 1024;
+
+/// What a process run to its end printed, and how it ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunOutput {
+    pub exit_code: Option<i32>,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+async fn read_all(mut stream: impl AsyncRead + Unpin) -> String {
+    use tokio::io::AsyncReadExt;
+    let mut bytes = Vec::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    while let Ok(n) = stream.read(&mut buffer).await {
+        if n == 0 {
+            break;
+        }
+        // Past the limit the stream is still drained, so the process does not block.
+        let room = MAX_RUN_OUTPUT.saturating_sub(bytes.len());
+        bytes.extend_from_slice(&buffer[..n.min(room)]);
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+impl CoreApi {
+    /// Runs a process to its end (`process/run`): short commands of plugins. The
+    /// working folder defaults to the first workspace folder.
+    pub async fn run_process(
+        &self,
+        mut spec: ProcessSpec,
+        input: Option<String>,
+    ) -> Result<RunOutput, String> {
+        use tokio::io::AsyncWriteExt;
+        if spec.cwd.is_none() {
+            spec.cwd = self
+                .inner
+                .project
+                .folders()
+                .first()
+                .and_then(|f| f.uri.to_file_path());
+        }
+        let process = self
+            .inner
+            .processes
+            .spawn(spec)
+            .map_err(|e| e.to_string())?;
+        let mut stdin = process.stdin;
+        tokio::spawn(async move {
+            if let Some(input) = input {
+                let _ = stdin.write_all(input.as_bytes()).await;
+            }
+            let _ = stdin.shutdown().await;
+        });
+        let (stdout, stderr) = tokio::join!(read_all(process.stdout), read_all(process.stderr));
+        let exit_code = process.control.wait().await;
+        Ok(RunOutput {
+            exit_code,
+            stdout,
+            stderr,
+        })
+    }
+}

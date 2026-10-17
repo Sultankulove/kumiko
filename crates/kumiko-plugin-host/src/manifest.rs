@@ -243,6 +243,19 @@ pub struct Contributes {
     pub language_servers: Vec<LanguageServerContribution>,
     pub configuration: Option<ConfigurationContribution>,
     pub task_providers: Vec<TaskProviderContribution>,
+    pub views: Vec<ViewContribution>,
+}
+
+/// `[[contributes.views]]`: a tree the plugin fills with `ui/tree/setModel`, shown by the host
+/// as a tool window.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct ViewContribution {
+    pub id: String,
+    pub title: String,
+    /// Command the host runs when the view is shown or its files may have changed.
+    #[serde(default)]
+    pub refresh_command: Option<CommandId>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -462,6 +475,10 @@ impl Manifest {
         unique(
             "contributes.languageServers",
             contributes.language_servers.iter().map(|s| s.id.as_str()),
+        )?;
+        unique(
+            "contributes.views",
+            contributes.views.iter().map(|v| v.id.as_str()),
         )?;
         let whens = contributes
             .commands

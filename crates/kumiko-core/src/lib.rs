@@ -49,6 +49,7 @@ use kumiko_wasm_host::{WasmConfig, WasmEngine};
 
 mod language_host;
 pub mod output;
+pub mod plugin_ui;
 mod plugins;
 pub mod tasks;
 pub mod terminals;
@@ -127,6 +128,7 @@ struct Inner {
     runs: tasks::Runs,
     pty: Arc<dyn kumiko_service_api::PtyProcesses>,
     terminals: terminals::Terminals,
+    plugin_ui: plugin_ui::PluginUi,
     reindex: Arc<tokio::sync::Notify>,
     plugins: plugins::PluginManager,
     tasks: Mutex<Vec<JoinHandle<()>>>,
@@ -278,6 +280,7 @@ impl CoreApi {
                 runs: tasks::Runs::default(),
                 pty,
                 terminals: terminals::Terminals::default(),
+                plugin_ui: plugin_ui::PluginUi::default(),
                 reindex: Arc::new(tokio::sync::Notify::new()),
                 plugins,
                 tasks: Mutex::default(),

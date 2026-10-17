@@ -7,7 +7,7 @@ use kumiko_events::{Delivery, EventFilter};
 use kumiko_lsp::{LanguageHost, LanguageService, ServerDecl, WorkspaceEdit};
 use kumiko_protocol::events::{
     DiagnosticsChanged, DocumentChanged, DocumentClosed, DocumentOpened, DocumentSaved,
-    LanguageStatusChanged,
+    LanguageStatusChanged, PluginState, PluginStateChanged,
 };
 use kumiko_protocol::methods::lsp::{
     LaunchSpec, LspMessageParams, MiddlewareResult, ResolveLaunchParams,
@@ -212,6 +212,18 @@ pub(crate) fn spawn_wiring(core: &CoreApi) -> tokio::task::JoinHandle<()> {
             };
             if event.topic == "plugin.stateChanged" {
                 language.set_servers(server_decls(&core));
+                // What a plugin showed goes with it (a crash, a disable, an uninstall).
+                if let Some(Ok(changed)) = event.decode::<PluginStateChanged>()
+                    && matches!(
+                        changed.state,
+                        PluginState::Installed
+                            | PluginState::Disabled
+                            | PluginState::Crashed
+                            | PluginState::Failed
+                    )
+                {
+                    core.forget_plugin_ui(&changed.plugin);
+                }
             } else if let Some(Ok(opened)) = event.decode::<DocumentOpened>() {
                 let Some(id) = core.inner.documents.find(&opened.uri) else {
                     continue;

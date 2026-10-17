@@ -58,3 +58,9 @@ title = "Echo: send a request to the language server"
 
 [[contributes.taskProviders]]
 type = "echo"
+
+# The consumer fixture of the Git plugin's interface (E12).
+[[consumes]]
+interface = "kumiko.git.repository"
+version = "^1"
+optional = true

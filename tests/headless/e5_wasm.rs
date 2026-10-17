@@ -160,7 +160,7 @@ async fn permissions_are_enforced_for_wasm_plugins() {
         .unwrap_err();
     assert!(error.contains("invalid params"), "{error}");
 
-    // With the permission granted, the call reaches the host (not implemented there yet).
+    // With the permission granted, the call reaches the host, which checks its params.
     core.uninstall_plugin(&plugin()).await.unwrap();
     let granted = source(ide.home(), |m| {
         m.replace("kind = \"wasm\"", "kind = \"wasm\"\npermissions = [\"ui\"]")
@@ -169,7 +169,7 @@ async fn permissions_are_enforced_for_wasm_plugins() {
     let error = run(&ide, "echo-wasm.host", host_call("ui/showMessage"))
         .await
         .unwrap_err();
-    assert!(error.contains("does not implement"), "{error}");
+    assert!(error.contains("missing field"), "{error}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

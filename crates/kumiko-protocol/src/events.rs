@@ -268,3 +268,18 @@ core_event!(
     State,
     "A terminal's shell ended."
 );
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct UiChanged {
+    /// `tree`, `decorations` or `status`.
+    pub what: String,
+    /// The view of a `tree` change.
+    pub view: Option<String>,
+}
+core_event!(
+    UiChanged,
+    "ui.changed",
+    State,
+    "A plugin changed its declarative UI (a view's tree, file decorations, status items)."
+);

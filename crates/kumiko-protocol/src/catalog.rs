@@ -139,6 +139,7 @@ pub fn catalog() -> Vec<MethodInfo> {
         req::<task::TaskRun>(),
         req::<task::TaskCancel>(),
         req::<terminal::TerminalOpen>(),
+        req::<process::Run>(),
         req::<process::Spawn>(),
         req::<process::SpawnPty>(),
         req::<process::ProcessWrite>(),
@@ -178,6 +179,7 @@ pub fn core_events() -> Vec<EventInfo> {
         ev::<events::LanguageStatusChanged>(),
         ev::<events::TerminalOpened>(),
         ev::<events::TerminalClosed>(),
+        ev::<events::UiChanged>(),
     ]
 }
 

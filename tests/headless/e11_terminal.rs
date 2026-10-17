@@ -89,3 +89,60 @@ async fn a_shell_runs_in_a_terminal() {
     );
     assert!(ide.core.terminals().is_empty());
 }
+
+/// `kumiko.terminal` (WASM) decides what a session runs; the core opens it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_terminal_plugin_opens_sessions() {
+    use std::path::PathBuf;
+    use std::sync::OnceLock;
+
+    use kumiko_headless::kumiko_core::plugin_host::PluginStore;
+    use kumiko_types::CommandId;
+
+    use crate::fixtures;
+
+    static COMPONENT: OnceLock<PathBuf> = OnceLock::new();
+    let component = COMPONENT.get_or_init(|| {
+        let extra = ["--release", "--target", "wasm32-wasip2"];
+        fixtures::build("kumiko-terminal", &extra, "kumiko_terminal", ".wasm")
+    });
+    let shell = if cfg!(windows) { "cmd.exe" } else { "sh" };
+    let ide = Headless::start_with(|options| {
+        let root = fixtures::workspace_root().join("plugins/terminal");
+        let schema = root.join("schema/config.json");
+        let files = [
+            ("plugin.wasm", component.as_path()),
+            ("schema/config.json", schema.as_path()),
+        ];
+        let source = fixtures::plugin_source(
+            options.dirs.data_dir(),
+            "terminal-src",
+            &root.join("plugin.toml"),
+            |m| m,
+            &files,
+        );
+        PluginStore::new(&options.dirs).install(&source).unwrap();
+        let settings = options.dirs.user_settings_file();
+        std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        std::fs::write(settings, format!("[terminal]\nshell = \"{shell}\"\n")).unwrap();
+    })
+    .await
+    .unwrap();
+    let mut events =
+        ide.core
+            .events()
+            .subscribe(kumiko_headless::kumiko_core::events::EventFilter::topics([
+                "terminal.opened",
+            ]));
+    let id = CommandId::new("terminal.new").unwrap();
+    let answer = ide.core.commands().execute(&id, vec![]).await.unwrap();
+    let opened = wait_for(&mut events, "terminal.opened", |e| {
+        e.decode::<TerminalOpened>().is_some()
+    })
+    .await
+    .unwrap();
+    let opened = opened.decode::<TerminalOpened>().unwrap().unwrap();
+    assert_eq!(opened.title, "Local");
+    assert_eq!(answer["terminal"], serde_json::json!(opened.terminal.0));
+    ide.core.close_terminal(opened.terminal);
+}

@@ -41,6 +41,7 @@ use kumiko_protocol::methods::service::{
 use kumiko_protocol::methods::task::{
     TaskDefinition, TaskList, TaskParams, TaskProvide, TaskProvideParams, TaskResolve,
 };
+use kumiko_protocol::methods::terminal::{TerminalOpen, TerminalOpenParams, TerminalOpenResult};
 use kumiko_protocol::{ErrorCode, Notification, Request, ResponseError};
 use kumiko_service_api::wasm::{
     WasmCallError, WasmHost, WasmInstance, WasmInstanceSpec, WasmRuntime,
@@ -71,6 +72,13 @@ pub trait HostApi: Send + Sync + 'static {
 
     /// The user's choice among several providers (`interfaces.<id>.provider`).
     fn preferred_provider(&self, interface: &InterfaceId) -> Option<PluginId>;
+
+    /// `terminal/open`: a terminal session in the IDE.
+    fn open_terminal(
+        &self,
+        caller: &PluginId,
+        params: TerminalOpenParams,
+    ) -> BoxFuture<'static, Result<TerminalOpenResult, ResponseError>>;
 
     /// `lsp/applyEdit`: a workspace edit of a server the plugin contributes.
     fn lsp_apply_edit(
@@ -696,6 +704,7 @@ impl PluginHost {
                     ServiceCall::METHOD.into(),
                     LspSendRequest::METHOD.into(),
                     LspApplyEdit::METHOD.into(),
+                    TerminalOpen::METHOD.into(),
                 ],
                 experimental: None,
             },
@@ -1044,7 +1053,7 @@ fn required_permission(method: &str) -> Option<Permission> {
     }
     match method.split('/').next() {
         Some("fs" | "document") => Some(Permission::FsWorkspace),
-        Some("process") => Some(Permission::ProcessSpawn),
+        Some("process" | "terminal") => Some(Permission::ProcessSpawn),
         Some("ui") => Some(Permission::Ui),
         _ => None,
     }
@@ -1113,6 +1122,13 @@ impl Bridge {
                         result(())
                     }),
             ),
+            TerminalOpen::METHOD => match params(method, request) {
+                Ok(call) => {
+                    let opened = self.api.open_terminal(&plugin, call);
+                    Box::pin(async move { opened.await.and_then(result) })
+                }
+                Err(error) => ready(Err(error)),
+            },
             LspApplyEdit::METHOD => match params(method, request) {
                 Ok(call) => {
                     let applied = self.api.lsp_apply_edit(&plugin, call);

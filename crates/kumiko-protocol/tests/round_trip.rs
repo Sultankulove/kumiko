@@ -519,6 +519,15 @@ fn all_samples() -> Samples {
         },
         (),
     );
+    s.req::<terminal::TerminalOpen>(
+        terminal::TerminalOpenParams {
+            title: "Local".into(),
+            spec: spec(),
+        },
+        terminal::TerminalOpenResult {
+            terminal: events::TerminalId(2),
+        },
+    );
 
     // process
     let pid = process::ProcessId(77);

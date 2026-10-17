@@ -5,7 +5,8 @@ use schemars::{Schema, SchemaGenerator};
 
 use crate::events::{self, CoreEvent, DeliveryClass};
 use crate::methods::{
-    base, command, config, document, event, fs, lifecycle, lsp, process, service, task, ui,
+    base, command, config, document, event, fs, lifecycle, lsp, process, service, task, terminal,
+    ui,
 };
 use crate::{Direction, Notification, Request};
 
@@ -137,6 +138,7 @@ pub fn catalog() -> Vec<MethodInfo> {
         req::<task::TaskResolve>(),
         req::<task::TaskRun>(),
         req::<task::TaskCancel>(),
+        req::<terminal::TerminalOpen>(),
         req::<process::Spawn>(),
         req::<process::SpawnPty>(),
         req::<process::ProcessWrite>(),
@@ -197,6 +199,7 @@ mod tests {
         "process",
         "lsp",
         "service",
+        "terminal",
         "$",
     ];
 

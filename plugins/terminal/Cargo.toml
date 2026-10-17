@@ -8,8 +8,12 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [lints]
 workspace = true
 
 [dependencies]
-kumiko-plugin-sdk.workspace = true
+kumiko-plugin-sdk = { workspace = true, features = ["wasm"] }
+serde_json.workspace = true

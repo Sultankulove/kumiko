@@ -281,14 +281,14 @@ impl Workbench {
             UiCommand::Toggle(window) => {
                 self.toggle_tool_window(window);
                 if window == ToolWindow::Terminal {
-                    self.ensure_terminal();
+                    self.ensure_terminal(cx);
                 }
             }
             UiCommand::NewTerminal => {
                 if !self.layout.is_open(ToolWindow::Terminal) {
                     self.layout.toggle(ToolWindow::Terminal);
                 }
-                self.new_terminal();
+                self.new_terminal(cx);
             }
             UiCommand::OpenFile(uri, position) => {
                 self.reveal = position.map(|p| (uri.clone(), p));

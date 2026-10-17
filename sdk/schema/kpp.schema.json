@@ -1924,6 +1924,36 @@
       ],
       "type": "object"
     },
+    "TerminalOpenParams": {
+      "properties": {
+        "spec": {
+          "$ref": "#/$defs/ProcessSpec",
+          "description": "What to run; an empty command is the platform's shell, no cwd the first folder."
+        },
+        "title": {
+          "description": "Title of the session's tab.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "TerminalOpenResult": {
+      "properties": {
+        "terminal": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "terminal"
+      ],
+      "type": "object"
+    },
     "TerminalOpened": {
       "properties": {
         "terminal": {
@@ -2824,6 +2854,17 @@
       },
       "result": {
         "$ref": "#/$defs/TaskExecution"
+      }
+    },
+    "terminal/open": {
+      "description": "Open a terminal session in the IDE (permission `process.spawn`).",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/TerminalOpenParams"
+      },
+      "result": {
+        "$ref": "#/$defs/TerminalOpenResult"
       }
     },
     "ui/fileDecorations": {

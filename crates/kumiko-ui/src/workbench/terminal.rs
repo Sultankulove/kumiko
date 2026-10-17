@@ -18,8 +18,19 @@ pub(super) struct Session {
 }
 
 impl Workbench {
-    /// Opens a new local session (the IDE's default; plugins may open others).
-    pub(super) fn new_terminal(&mut self) {
+    /// A new session: through `kumiko.terminal` (`terminal.new`) when it is installed, which
+    /// decides what runs; otherwise the IDE's default shell, until kits install the plugin.
+    pub(super) fn new_terminal(&mut self, cx: &mut Context<Self>) {
+        if let Ok(id) = kumiko_types::CommandId::new("terminal.new")
+            && self.core.commands().contains(&id)
+        {
+            self.execute(id, Vec::new(), cx);
+            return;
+        }
+        self.default_terminal();
+    }
+
+    fn default_terminal(&mut self) {
         let number = self.terminal_counter + 1;
         self.terminal_counter = number;
         let title = if number == 1 {
@@ -72,9 +83,9 @@ impl Workbench {
     }
 
     /// Opening the window without sessions starts one.
-    pub(super) fn ensure_terminal(&mut self) {
+    pub(super) fn ensure_terminal(&mut self, cx: &mut Context<Self>) {
         if self.layout.is_open(ToolWindow::Terminal) && self.sessions.is_empty() {
-            self.new_terminal();
+            self.new_terminal(cx);
         }
         self.focus_terminal = true;
     }
@@ -160,7 +171,7 @@ impl Workbench {
             .hover(|d| d.text_color(rgba(p.foreground)))
             .child("+")
             .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-                this.new_terminal();
+                this.new_terminal(cx);
                 cx.notify();
             }));
         let body = self

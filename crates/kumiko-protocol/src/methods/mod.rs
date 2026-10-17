@@ -16,4 +16,5 @@ pub mod lsp;
 pub mod process;
 pub mod service;
 pub mod task;
+pub mod terminal;
 pub mod ui;

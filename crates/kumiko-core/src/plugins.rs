@@ -19,6 +19,7 @@ use kumiko_protocol::common::CommandCall;
 use kumiko_protocol::events::{InterfaceAvailabilityChanged, PluginState, PluginStateChanged};
 use kumiko_protocol::methods::lifecycle::{PluginStorage, WorkspaceInfo};
 use kumiko_protocol::methods::lsp::{LspApplyEditParams, LspMessageParams};
+use kumiko_protocol::methods::terminal::{TerminalOpenParams, TerminalOpenResult};
 use kumiko_protocol::{ErrorCode, ResponseError};
 use kumiko_service_api::wasm::WasmRuntime;
 use kumiko_service_api::when::WhenExpr;
@@ -34,6 +35,8 @@ pub(crate) struct Services {
     pub locale: Option<String>,
     /// The Language service, set once the core is assembled (plugins exist before it).
     pub language: Arc<std::sync::OnceLock<kumiko_lsp::LanguageService>>,
+    /// The core itself, set once it is assembled (terminals).
+    pub core: Arc<std::sync::OnceLock<std::sync::Weak<crate::Inner>>>,
 }
 
 /// Installed plugins and everything the core registered for them.
@@ -61,6 +64,7 @@ impl PluginManager {
             project: services.project.clone(),
             locale: services.locale.clone(),
             language: services.language.clone(),
+            core: services.core.clone(),
             dirs: dirs.clone(),
         });
         let host = PluginHost::new(
@@ -334,10 +338,50 @@ struct CoreHostApi {
     project: Arc<ProjectService>,
     locale: Option<String>,
     language: Arc<std::sync::OnceLock<kumiko_lsp::LanguageService>>,
+    core: Arc<std::sync::OnceLock<std::sync::Weak<crate::Inner>>>,
     dirs: KumikoDirs,
 }
 
 impl HostApi for CoreHostApi {
+    fn open_terminal(
+        &self,
+        caller: &PluginId,
+        params: TerminalOpenParams,
+    ) -> BoxFuture<'static, Result<TerminalOpenResult, ResponseError>> {
+        let core = self
+            .core
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .map(|inner| crate::CoreApi { inner });
+        let owner = caller.to_string();
+        Box::pin(async move {
+            let core = core.ok_or_else(|| {
+                ResponseError::new(ErrorCode::InternalError, "the core is starting")
+            })?;
+            let spec = params.spec;
+            let size = spec.pty.map_or(
+                kumiko_service_api::PtySize {
+                    cols: 120,
+                    rows: 30,
+                },
+                |s| kumiko_service_api::PtySize {
+                    cols: s.cols,
+                    rows: s.rows,
+                },
+            );
+            let spec = kumiko_service_api::ProcessSpec {
+                command: spec.command,
+                args: spec.args,
+                cwd: spec.cwd.map(std::path::PathBuf::from),
+                env: spec.env,
+                owner,
+            };
+            core.open_terminal(&params.title, spec, size)
+                .map(|terminal| TerminalOpenResult { terminal })
+                .map_err(|e| ResponseError::new(ErrorCode::InternalError, e))
+        })
+    }
+
     fn lsp_apply_edit(
         &self,
         caller: &PluginId,

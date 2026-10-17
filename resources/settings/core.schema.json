@@ -13,11 +13,6 @@
       "default": ["**/.git", "**/.hg", "**/.svn", "**/CVS", "**/.DS_Store"],
       "description": "Globs hidden from the file tree and searches."
     },
-    "terminal.shell": {
-      "type": "string",
-      "default": "",
-      "description": "Program the terminal starts. Empty: $SHELL (or /bin/bash), PowerShell on Windows."
-    },
     "search.ignoreFiles": {
       "type": "array",
       "items": { "type": "string" },

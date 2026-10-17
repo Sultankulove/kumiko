@@ -59,7 +59,7 @@ typedef struct {
   } val;
 } exports_kumiko_plugin_plugin_result_string_rpc_error_t;
 
-// Imported Functions from `kumiko:plugin/host@0.1.0`
+// Imported Functions from `kumiko:plugin/host@1.0.0`
 // Plugin-to-host request: any KPP method; `params` and the result are JSON.
 extern bool kumiko_plugin_host_call(kumiko_plugin_string_t *method, kumiko_plugin_string_t *params, kumiko_plugin_string_t *ret, kumiko_plugin_host_rpc_error_t *err);
 // Plugin-to-host notification.
@@ -69,7 +69,7 @@ extern bool kumiko_plugin_host_stream_write(uint32_t id, kumiko_plugin_list_u8_t
 // Close a binary stream.
 extern void kumiko_plugin_host_stream_close(uint32_t id);
 
-// Exported Functions from `kumiko:plugin/plugin@0.1.0`
+// Exported Functions from `kumiko:plugin/plugin@1.0.0`
 bool exports_kumiko_plugin_plugin_handle(kumiko_plugin_string_t *method, kumiko_plugin_string_t *params, kumiko_plugin_string_t *ret, exports_kumiko_plugin_plugin_rpc_error_t *err);
 void exports_kumiko_plugin_plugin_on_notify(kumiko_plugin_string_t *method, kumiko_plugin_string_t *params);
 void exports_kumiko_plugin_plugin_on_stream(uint32_t id, kumiko_plugin_list_u8_t *data);

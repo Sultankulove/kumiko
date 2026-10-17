@@ -4,7 +4,7 @@
 id = "kumiko.echo-wasm"
 name = "Echo (WASM)"
 version = "0.1.0"
-api = "^0.1"
+api = "^1.0"
 kind = "wasm"
 entry = "plugin.wasm"
 activation = ["onCommand:echo-wasm.*"]

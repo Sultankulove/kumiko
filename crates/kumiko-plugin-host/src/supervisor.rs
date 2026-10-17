@@ -38,6 +38,9 @@ use kumiko_protocol::methods::lsp::{
 use kumiko_protocol::methods::service::{
     ServiceCall, ServiceCallParams, ServiceInvoke, ServiceInvokeParams,
 };
+use kumiko_protocol::methods::task::{
+    TaskDefinition, TaskList, TaskParams, TaskProvide, TaskProvideParams, TaskResolve,
+};
 use kumiko_protocol::{ErrorCode, Notification, Request, ResponseError};
 use kumiko_service_api::wasm::{
     WasmCallError, WasmHost, WasmInstance, WasmInstanceSpec, WasmRuntime,
@@ -517,6 +520,32 @@ impl PluginHost {
     ) -> Result<LaunchSpec, ResponseError> {
         let connection = self.ensure_running(plugin).await?;
         connection.request::<ResolveLaunch>(&params).await
+    }
+
+    /// The plugin's tasks of a provider type (`task/provide`), starting the plugin if needed.
+    pub async fn task_provide(
+        &self,
+        plugin: &PluginId,
+        task_type: &str,
+    ) -> Result<TaskList, ResponseError> {
+        let connection = self.ensure_running(plugin).await?;
+        connection
+            .request::<TaskProvide>(&TaskProvideParams {
+                task_type: task_type.to_owned(),
+            })
+            .await
+    }
+
+    /// Fills in what a task runs (`task/resolve`).
+    pub async fn task_resolve(
+        &self,
+        plugin: &PluginId,
+        task: TaskDefinition,
+    ) -> Result<TaskDefinition, ResponseError> {
+        let connection = self.ensure_running(plugin).await?;
+        connection
+            .request::<TaskResolve>(&TaskParams { task })
+            .await
     }
 
     /// LSP methods the running plugin intercepts; empty when it does not run.

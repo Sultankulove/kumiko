@@ -55,3 +55,6 @@ launch = "dynamic"
 [[contributes.commands]]
 id = "echo.lsp"
 title = "Echo: send a request to the language server"
+
+[[contributes.taskProviders]]
+type = "echo"

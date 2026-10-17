@@ -19,6 +19,8 @@ pub enum Mode {
     Usages,
     /// The new name of a symbol (Shift+F6): the input is the answer.
     Rename,
+    /// Tasks to run (Alt+Shift+F10).
+    Tasks,
 }
 
 impl Mode {
@@ -29,7 +31,7 @@ impl Mode {
             Mode::Commands => ">",
             Mode::Line => ":",
             Mode::Symbols => "@",
-            Mode::Themes | Mode::Usages | Mode::Rename => "",
+            Mode::Themes | Mode::Usages | Mode::Rename | Mode::Tasks => "",
         }
     }
 }
@@ -46,6 +48,8 @@ pub enum Action {
     OpenAt(Uri, kumiko_types::Position),
     /// Rename to what was typed.
     Rename,
+    /// Run the task with this index of the offered list.
+    RunTask(usize),
     /// Informational row (e.g. "no results").
     None,
 }

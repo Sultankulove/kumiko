@@ -10,6 +10,7 @@
 //! - interface `kumiko.echo.api`, method `ping`, answers with its params and the caller.
 //! - `echo.lsp [server, method, params]` sends a request to its language server;
 //! - intercepts `fake/question` of its server and answers it itself;
+//! - task `echo: hello` (type `echo`): runs this binary with `--print`;
 //! - language server `fake`: `kumiko-fake-lsp` installed next to the plugin binary, run in the
 //!   workspace folder.
 
@@ -17,6 +18,8 @@ use std::process::{ExitCode, Stdio};
 
 use kumiko_plugin_sdk::process::Plugin;
 use kumiko_plugin_sdk::protocol::methods::lsp::{LaunchSpec, MiddlewareResult};
+use kumiko_plugin_sdk::protocol::methods::process::ProcessSpec;
+use kumiko_plugin_sdk::protocol::methods::task::{TaskDefinition, TaskGroup, TaskList};
 use kumiko_plugin_sdk::types::InterfaceId;
 use kumiko_plugin_sdk::{ErrorCode, ResponseError};
 use serde_json::{Value, json};
@@ -28,6 +31,13 @@ const SLEEPER: &str = "KUMIKO_ECHO_SLEEPER";
 async fn main() -> ExitCode {
     if std::env::var_os(SLEEPER).is_some() {
         std::thread::sleep(std::time::Duration::MAX);
+    }
+    // The process of the `echo: hello` task: prints its arguments and exits.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("--print") {
+        println!("{}", args[1..].join(" "));
+        eprintln!("done");
+        return ExitCode::SUCCESS;
     }
     let plugin = Plugin::new()
         .command(
@@ -89,6 +99,28 @@ async fn main() -> ExitCode {
         .lsp_middleware("fake/question", |_ctx, message| async move {
             Ok(MiddlewareResult::Respond {
                 result: json!({ "answer": 42, "server": message.server_id }),
+            })
+        })
+        .task_provider("echo", |_ctx| async move {
+            let exe = std::env::current_exe()
+                .map_err(|e| ResponseError::new(ErrorCode::InternalError, e.to_string()))?;
+            Ok(TaskList {
+                tasks: vec![TaskDefinition {
+                    id: "hello".into(),
+                    label: "echo: hello".into(),
+                    task_type: "echo".into(),
+                    group: TaskGroup::Run,
+                    spec: Some(ProcessSpec {
+                        command: exe.to_string_lossy().into_owned(),
+                        args: vec!["--print".into(), "hello from a task".into()],
+                        cwd: None,
+                        env: Default::default(),
+                        env_mode: Default::default(),
+                        pty: None,
+                        kill_on_owner_exit: false,
+                    }),
+                    problem_matcher: None,
+                }],
             })
         })
         .language_server("fake", |_ctx, params| async move {

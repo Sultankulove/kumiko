@@ -37,6 +37,8 @@ pub enum UiCommand {
     FindUsages,
     Rename,
     Reformat,
+    RunTask,
+    StopTasks,
     Quit,
 }
 
@@ -84,6 +86,8 @@ const COMMANDS: &[(&str, Parse)] = &[
     ("workbench.findUsages", |_| Ok(UiCommand::FindUsages)),
     ("workbench.rename", |_| Ok(UiCommand::Rename)),
     ("workbench.reformat", |_| Ok(UiCommand::Reformat)),
+    ("workbench.runTask", |_| Ok(UiCommand::RunTask)),
+    ("workbench.stopTasks", |_| Ok(UiCommand::StopTasks)),
     ("workbench.quit", |_| Ok(UiCommand::Quit)),
 ];
 

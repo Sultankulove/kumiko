@@ -41,6 +41,7 @@ use crate::state::{self, GroupState, WorkspaceState};
 use crate::tabs::{Split, Tab, Tabs};
 
 mod language;
+mod tasks;
 use crate::tree::{Entry, FileTree, Row};
 
 #[cfg(windows)]
@@ -120,6 +121,8 @@ pub struct Workbench {
     /// for.
     symbols: Option<(Uri, Vec<kumiko_core::language::Symbol>)>,
     usages: Vec<Item>,
+    /// Tasks offered by Run Task.
+    task_list: Vec<kumiko_core::tasks::Task>,
     language_target: Option<(Uri, kumiko_types::Position)>,
     a11y: Option<Bridge>,
     /// The open Quick Open popup and its focus.
@@ -188,6 +191,7 @@ impl Workbench {
             message: None,
             symbols: None,
             usages: Vec::new(),
+            task_list: Vec::new(),
             language_target: None,
             a11y: None,
             started: Some(started),
@@ -261,6 +265,8 @@ impl Workbench {
             UiCommand::FindUsages => self.find_usages(cx),
             UiCommand::Rename => self.open_rename(cx),
             UiCommand::Reformat => self.reformat(cx),
+            UiCommand::RunTask => self.open_tasks(cx),
+            UiCommand::StopTasks => self.stop_tasks(),
             UiCommand::SelectTheme => {
                 self.open_menu = None;
                 self.quick_open = Some(QuickOpen::picker(Mode::Themes));
@@ -795,6 +801,7 @@ impl Workbench {
             Mode::Themes => self.theme_items(&query),
             Mode::Usages => self.usage_items(&query),
             Mode::Rename => self.rename_items(&query),
+            Mode::Tasks => self.task_items(&query),
         };
         let items = if items.is_empty() {
             vec![self.note("quickOpen.noResults")]
@@ -1048,6 +1055,7 @@ impl Workbench {
                 self.execute_id("workbench.openFile", args, cx)
             }
             Action::Rename => self.rename(query, cx),
+            Action::RunTask(index) => self.run_task(index, cx),
             Action::GotoLine(line) => {
                 if let Some(editor) = self.active_editor() {
                     (editor.goto_line)(line, cx);
@@ -2100,6 +2108,7 @@ impl Workbench {
             .when(quick.input.text().is_empty(), |d| {
                 let placeholder = match quick.mode() {
                     Mode::Usages => "usages.placeholder",
+                    Mode::Tasks => "tasks.placeholder",
                     Mode::Rename => "rename.prompt",
                     Mode::Themes => "quickOpen.themes",
                     _ => "quickOpen.placeholder",

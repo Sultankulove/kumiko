@@ -405,3 +405,12 @@ when = "editorFocus"
 key = "ctrl+alt+l"
 command = "workbench.reformat"
 when = "editorFocus"
+
+# Tasks, as Run… and Stop in IntelliJ.
+[[binding]]
+key = "alt+shift+f10"
+command = "workbench.runTask"
+
+[[binding]]
+key = "ctrl+f2"
+command = "workbench.stopTasks"

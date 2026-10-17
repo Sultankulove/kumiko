@@ -5,6 +5,7 @@
 
 mod jdk;
 mod jdtls;
+mod maven;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -13,6 +14,7 @@ use kumiko_plugin_sdk::process::{Context, Plugin};
 use kumiko_plugin_sdk::protocol::methods::lsp::{
     LaunchSpec, MiddlewareResult, ResolveLaunchParams,
 };
+use kumiko_plugin_sdk::protocol::methods::task::TaskList;
 use kumiko_plugin_sdk::{ErrorCode, ResponseError};
 use serde_json::{Value, json};
 
@@ -193,6 +195,25 @@ async fn main() -> ExitCode {
                 .map_err(|e| ResponseError::new(ErrorCode::InternalError, e.to_string()))?;
             Ok(MiddlewareResult::Respond {
                 result: Value::Null,
+            })
+        })
+        .task_provider("maven", |ctx| async move {
+            let folders: Vec<(String, PathBuf)> = ctx
+                .params()
+                .workspace
+                .folders
+                .iter()
+                .filter_map(|f| Some((f.name.clone(), f.uri.to_file_path()?)))
+                .collect();
+            let settings = Settings::read(&ctx.params().config);
+            let jdks = jdk::detect(&jdk::Sources::from_env(settings.jdks.clone()));
+            let project_jdk = settings
+                .jdk
+                .clone()
+                .filter(|home| jdk::read(home).is_some())
+                .or_else(|| jdks.first().map(|j| j.home.clone()));
+            Ok(TaskList {
+                tasks: maven::tasks(&folders, project_jdk.as_deref()),
             })
         })
         .command("java.showJdks", |ctx, _args| async move {

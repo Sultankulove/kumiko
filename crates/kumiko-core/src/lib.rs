@@ -50,6 +50,7 @@ use kumiko_wasm_host::{WasmConfig, WasmEngine};
 mod language_host;
 pub mod output;
 mod plugins;
+pub mod tasks;
 
 pub use language_host::LANGUAGE_CHANNEL;
 
@@ -121,6 +122,8 @@ struct Inner {
     files: Arc<FileIndex>,
     syntax: Arc<SyntaxService>,
     language: kumiko_lsp::LanguageService,
+    processes: Arc<dyn kumiko_service_api::Processes>,
+    runs: tasks::Runs,
     reindex: Arc<tokio::sync::Notify>,
     plugins: plugins::PluginManager,
     tasks: Mutex<Vec<JoinHandle<()>>>,
@@ -262,9 +265,11 @@ impl CoreApi {
                 files: Arc::new(FileIndex::new()),
                 syntax,
                 language: kumiko_lsp::LanguageService::new(
-                    processes,
+                    processes.clone(),
                     Arc::new(language_host::Host { core: weak.clone() }),
                 ),
+                processes,
+                runs: tasks::Runs::default(),
                 reindex: Arc::new(tokio::sync::Notify::new()),
                 plugins,
                 tasks: Mutex::default(),

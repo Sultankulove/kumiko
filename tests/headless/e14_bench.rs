@@ -79,7 +79,13 @@ async fn budgets_on_fifty_thousand_files() {
         std::fs::write(out, serde_json::to_string_pretty(&numbers).unwrap()).unwrap();
     }
     if !cfg!(debug_assertions) {
-        assert!(quick_open_max < Duration::from_millis(30), "Quick Open {quick_open_max:?}");
-        assert!(first_result < Duration::from_millis(200), "search {first_result:?}");
+        assert!(
+            quick_open_max < Duration::from_millis(30),
+            "Quick Open {quick_open_max:?}"
+        );
+        assert!(
+            first_result < Duration::from_millis(200),
+            "search {first_result:?}"
+        );
     }
 }

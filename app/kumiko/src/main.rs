@@ -15,7 +15,9 @@ mod editor;
 #[path = "editor_alt.rs"]
 mod editor;
 #[cfg(not(any(feature = "editor-default", feature = "alt-editor")))]
-compile_error!("choose an editor: feature `editor-default` or `alt-editor` (docs/sdk/distributions.md)");
+compile_error!(
+    "choose an editor: feature `editor-default` or `alt-editor` (docs/sdk/distributions.md)"
+);
 mod kit;
 mod log;
 mod terminal;

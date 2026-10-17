@@ -212,7 +212,10 @@ async fn killing_a_plugin_during_a_request() {
     };
     tokio::time::sleep(Duration::from_millis(300)).await;
     kill_9(pid);
-    assert!(hanging.await.unwrap().is_err(), "the request ends with an error");
+    assert!(
+        hanging.await.unwrap().is_err(),
+        "the request ends with an error"
+    );
     wait_for(&mut events, "Crashed", state_is(PluginState::Crashed))
         .await
         .unwrap();
@@ -220,7 +223,13 @@ async fn killing_a_plugin_during_a_request() {
         .await
         .unwrap();
 
-    let text = ide.core.documents().snapshot(doc.id).unwrap().text.to_string();
+    let text = ide
+        .core
+        .documents()
+        .snapshot(doc.id)
+        .unwrap()
+        .text
+        .to_string();
     assert_eq!(text, "unsaved text\n", "no edit is lost");
     assert!(run(&ide, "echo.say", vec![json!(1)]).await.is_ok());
 }
@@ -333,13 +342,23 @@ async fn kits_leave_user_settings_alone() {
 
     let ready = || core.plugins().get(&echo()).is_some_and(|e| e.is_ready());
     assert!(ready());
-    core.apply_kit(&core.load_kit("minimal").unwrap()).await.unwrap();
+    core.apply_kit(&core.load_kit("minimal").unwrap())
+        .await
+        .unwrap();
     assert!(!ready(), "minimal disables every plugin");
     // `java` wants plugins that are not here: reported, applied as far as possible.
-    let plan = core.apply_kit(&core.load_kit("java").unwrap()).await.unwrap();
+    let plan = core
+        .apply_kit(&core.load_kit("java").unwrap())
+        .await
+        .unwrap();
     assert_eq!(plan.missing.len(), 3);
-    assert!(!ready(), "java is not exclusive: the echo plugin stays as it was");
-    core.apply_kit(&core.load_kit("minimal").unwrap()).await.unwrap();
+    assert!(
+        !ready(),
+        "java is not exclusive: the echo plugin stays as it was"
+    );
+    core.apply_kit(&core.load_kit("minimal").unwrap())
+        .await
+        .unwrap();
     assert!(!ready());
     assert_eq!(core.active_kit().as_deref(), Some("kumiko.kit.minimal"));
 

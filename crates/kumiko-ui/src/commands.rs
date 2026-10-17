@@ -40,6 +40,7 @@ pub enum UiCommand {
     RunTask,
     StopTasks,
     FindInFiles,
+    NewTerminal,
     Quit,
 }
 
@@ -57,6 +58,10 @@ const COMMANDS: &[(&str, Parse)] = &[
     ("workbench.toggleOutput", |_| {
         Ok(UiCommand::Toggle(ToolWindow::Output))
     }),
+    ("workbench.toggleTerminal", |_| {
+        Ok(UiCommand::Toggle(ToolWindow::Terminal))
+    }),
+    ("workbench.newTerminal", |_| Ok(UiCommand::NewTerminal)),
     ("workbench.openFile", open_file),
     ("workbench.quickOpen", |_| {
         Ok(UiCommand::QuickOpen(Mode::Files))

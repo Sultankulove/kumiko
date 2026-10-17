@@ -11,6 +11,7 @@ use kumiko_types::KumikoDirs;
 
 mod editor;
 mod log;
+mod terminal;
 
 fn main() -> anyhow::Result<()> {
     let started = std::time::Instant::now();
@@ -62,6 +63,7 @@ fn main() -> anyhow::Result<()> {
         runtime.handle().clone(),
         started,
         std::rc::Rc::new(editor::Editors),
+        std::rc::Rc::new(terminal::Terminals),
     );
     runtime.block_on(core.shutdown());
     Ok(())

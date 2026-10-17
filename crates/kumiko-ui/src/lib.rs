@@ -24,6 +24,7 @@ mod problems;
 mod quick_open;
 mod state;
 mod tabs;
+pub mod terminal;
 mod tree;
 mod workbench;
 
@@ -33,7 +34,13 @@ use workbench::Workbench;
 /// Opens the workbench and runs the UI event loop on the current (main) thread until the
 /// user quits. Core work is spawned on `runtime`; `started` is when the process started, for
 /// the start-up time logged with the first frame.
-pub fn run(core: CoreApi, runtime: Handle, started: Instant, editors: Rc<dyn EditorProvider>) {
+pub fn run(
+    core: CoreApi,
+    runtime: Handle,
+    started: Instant,
+    editors: Rc<dyn EditorProvider>,
+    terminals: Rc<dyn terminal::TerminalProvider>,
+) {
     let (requests, received) = tokio::sync::mpsc::unbounded_channel();
     // The registered handlers hold the senders; the channel lives as long as the core.
     commands::register(&core, &requests, editors.commands());
@@ -54,7 +61,7 @@ pub fn run(core: CoreApi, runtime: Handle, started: Instant, editors: Rc<dyn Edi
             ..WindowOptions::default()
         };
         let opened = cx.open_window(options, |_, cx| {
-            cx.new(|cx| Workbench::new(core, runtime, received, started, editors, cx))
+            cx.new(|cx| Workbench::new(core, runtime, received, started, editors, terminals, cx))
         });
         let window = match opened {
             Ok(window) => window,

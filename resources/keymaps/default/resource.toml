@@ -418,3 +418,8 @@ command = "workbench.stopTasks"
 [[binding]]
 key = "ctrl+shift+f"
 command = "workbench.findInFiles"
+
+# Terminal, as in IntelliJ.
+[[binding]]
+key = "alt+f12"
+command = "workbench.toggleTerminal"

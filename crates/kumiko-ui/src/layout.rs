@@ -27,6 +27,7 @@ pub enum ToolWindow {
     Project,
     Problems,
     Output,
+    Terminal,
 }
 
 /// Which edge a tool window belongs to.
@@ -37,16 +38,17 @@ pub enum Side {
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 3] = [
+    pub const ALL: [ToolWindow; 4] = [
         ToolWindow::Project,
         ToolWindow::Problems,
         ToolWindow::Output,
+        ToolWindow::Terminal,
     ];
 
     pub fn side(self) -> Side {
         match self {
             ToolWindow::Project => Side::Left,
-            ToolWindow::Problems | ToolWindow::Output => Side::Bottom,
+            ToolWindow::Problems | ToolWindow::Output | ToolWindow::Terminal => Side::Bottom,
         }
     }
 
@@ -56,6 +58,7 @@ impl ToolWindow {
             ToolWindow::Project => "toolWindow.project",
             ToolWindow::Problems => "toolWindow.problems",
             ToolWindow::Output => "toolWindow.output",
+            ToolWindow::Terminal => "toolWindow.terminal",
         }
     }
 
@@ -65,6 +68,7 @@ impl ToolWindow {
             ToolWindow::Project => "workbench.toggleProject",
             ToolWindow::Problems => "workbench.toggleProblems",
             ToolWindow::Output => "workbench.toggleOutput",
+            ToolWindow::Terminal => "workbench.toggleTerminal",
         }
     }
 }

@@ -18,8 +18,8 @@ use kumiko_core::config::keymap::{KeyChord, KeySequence, Resolution};
 use kumiko_core::documents::{Encoding, LineEnding, Snapshot};
 use kumiko_core::events::{Delivery, EventFilter};
 use kumiko_core::plugin_host::PluginStatus;
-use kumiko_core::protocol::events::FsChanged;
 use kumiko_core::protocol::events::PluginState;
+use kumiko_core::protocol::events::{FsChanged, TerminalClosed, TerminalOpened};
 use kumiko_core::protocol::methods::fs::FileKind;
 use kumiko_core::resources::ResourceKind;
 use kumiko_core::service_api::FileSystem;
@@ -39,10 +39,12 @@ use crate::problems::{self, Group, Problem, Severity};
 use crate::quick_open::{self, Action, Item, Mode, QuickOpen};
 use crate::state::{self, GroupState, WorkspaceState};
 use crate::tabs::{Split, Tab, Tabs};
+use crate::terminal::TerminalProvider;
 
 mod language;
 mod search;
 mod tasks;
+mod terminal;
 use crate::tree::{Entry, FileTree, Row};
 
 #[cfg(windows)]
@@ -116,6 +118,13 @@ pub struct Workbench {
     /// Editors by group and file: each group keeps its own carets and scroll.
     editors: HashMap<(usize, Uri), EditorHandle>,
     provider: Rc<dyn EditorProvider>,
+    terminals: Rc<dyn TerminalProvider>,
+    /// Terminal sessions (tool window tabs), the shown one, how many were started, and a
+    /// request to focus the shown one.
+    sessions: Vec<terminal::Session>,
+    active_session: usize,
+    terminal_counter: usize,
+    focus_terminal: bool,
     /// The last message for the status bar (e.g. a failed command).
     message: Option<String>,
     /// Symbols of a file for `@` in Quick Open, usages for Alt+F7, the place a rename is
@@ -157,6 +166,7 @@ impl Workbench {
         requests: UnboundedReceiver<UiCommand>,
         started: Instant,
         provider: Rc<dyn EditorProvider>,
+        terminals: Rc<dyn TerminalProvider>,
         cx: &mut Context<Self>,
     ) -> Self {
         let locale = core.locale();
@@ -194,6 +204,11 @@ impl Workbench {
             files: HashMap::new(),
             editors: HashMap::new(),
             provider,
+            terminals,
+            sessions: Vec::new(),
+            active_session: 0,
+            terminal_counter: 0,
+            focus_terminal: false,
             message: None,
             symbols: None,
             usages: Vec::new(),
@@ -263,7 +278,18 @@ impl Workbench {
 
     fn apply(&mut self, command: UiCommand, cx: &mut Context<Self>) {
         match command {
-            UiCommand::Toggle(window) => self.toggle_tool_window(window),
+            UiCommand::Toggle(window) => {
+                self.toggle_tool_window(window);
+                if window == ToolWindow::Terminal {
+                    self.ensure_terminal();
+                }
+            }
+            UiCommand::NewTerminal => {
+                if !self.layout.is_open(ToolWindow::Terminal) {
+                    self.layout.toggle(ToolWindow::Terminal);
+                }
+                self.new_terminal();
+            }
             UiCommand::OpenFile(uri, position) => {
                 self.reveal = position.map(|p| (uri.clone(), p));
                 self.open_file(uri, cx)
@@ -416,6 +442,8 @@ impl Workbench {
             "document.saved",
             "language.diagnosticsChanged",
             "language.statusChanged",
+            "terminal.opened",
+            "terminal.closed",
         ];
         let mut events = core.events().subscribe(EventFilter::topics(topics));
         cx.spawn(async move |this, cx| {
@@ -448,6 +476,12 @@ impl Workbench {
         };
         if event.topic.starts_with("document.") {
             self.refresh_dirty(cx);
+        } else if let Some(Ok(opened)) = event.decode::<TerminalOpened>() {
+            self.terminal_opened(opened.terminal, opened.title);
+            cx.notify();
+        } else if let Some(Ok(closed)) = event.decode::<TerminalClosed>() {
+            self.terminal_closed(closed.terminal);
+            cx.notify();
         } else if event.topic == "language.statusChanged" {
             cx.notify();
         } else if event.topic == "language.diagnosticsChanged" {
@@ -1678,6 +1712,7 @@ fn place(rect: Rect) -> gpui::Div {
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_editors(window, cx);
+        self.ensure_terminal_views(window, cx);
         self.apply_reveal(cx);
         if self.shown
             && let Some(started) = self.started.take()
@@ -2323,6 +2358,7 @@ impl Workbench {
             ToolWindow::Project => self.project_tree(cx),
             ToolWindow::Problems => self.problems_view(cx),
             ToolWindow::Output => self.output_view(cx),
+            ToolWindow::Terminal => self.terminal_view(cx),
         };
         let panel = place(rect)
             .bg(rgba(p.panel))

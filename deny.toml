@@ -17,6 +17,9 @@ ignore = [
     { id = "RUSTSEC-2026-0173", reason = "proc-macro-error2, via the UI stack" },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser, via the GPUI text stack" },
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz, via the GPUI text stack" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant, via the UI stack (ashpd, Linux portals)" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names, via the UI stack (ashpd, Linux portals)" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive, via the UI stack (ashpd, Linux portals)" },
 ]
 
 [licenses]

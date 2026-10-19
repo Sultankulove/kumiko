@@ -5,7 +5,7 @@
 /// JSON strings that follow `sdk/schema/kpp.schema.json` — the same payloads process plugins
 /// send in JSON-RPC messages (ADR-010). The version follows the protocol version and becomes
 /// 1.0.0 when KPP v1 is frozen.
-package kumiko:plugin@0.1.0;
+package kumiko:plugin@1.0.0;
 
 interface types {
     /// Error of a failed call: a KPP error code (see `errorCodes` in the schema), a message

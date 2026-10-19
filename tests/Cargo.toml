@@ -29,3 +29,7 @@ path = "architecture.rs"
 [[test]]
 name = "headless"
 path = "headless/main.rs"
+
+[[test]]
+name = "modularity"
+path = "modularity/main.rs"

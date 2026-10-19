@@ -3,23 +3,23 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Imported Functions from `kumiko:plugin/host@0.1.0`
+// Imported Functions from `kumiko:plugin/host@1.0.0`
 
-__attribute__((__import_module__("kumiko:plugin/host@0.1.0"), __import_name__("call")))
+__attribute__((__import_module__("kumiko:plugin/host@1.0.0"), __import_name__("call")))
 extern void __wasm_import_kumiko_plugin_host_call(uint8_t *, size_t, uint8_t *, size_t, uint8_t *);
 
-__attribute__((__import_module__("kumiko:plugin/host@0.1.0"), __import_name__("notify")))
+__attribute__((__import_module__("kumiko:plugin/host@1.0.0"), __import_name__("notify")))
 extern void __wasm_import_kumiko_plugin_host_notify(uint8_t *, size_t, uint8_t *, size_t);
 
-__attribute__((__import_module__("kumiko:plugin/host@0.1.0"), __import_name__("stream-write")))
+__attribute__((__import_module__("kumiko:plugin/host@1.0.0"), __import_name__("stream-write")))
 extern void __wasm_import_kumiko_plugin_host_stream_write(int32_t, uint8_t *, size_t, uint8_t *);
 
-__attribute__((__import_module__("kumiko:plugin/host@0.1.0"), __import_name__("stream-close")))
+__attribute__((__import_module__("kumiko:plugin/host@1.0.0"), __import_name__("stream-close")))
 extern void __wasm_import_kumiko_plugin_host_stream_close(int32_t);
 
-// Exported Functions from `kumiko:plugin/plugin@0.1.0`
+// Exported Functions from `kumiko:plugin/plugin@1.0.0`
 
-__attribute__((__weak__, __export_name__("cabi_post_kumiko:plugin/plugin@0.1.0#handle")))
+__attribute__((__weak__, __export_name__("cabi_post_kumiko:plugin/plugin@1.0.0#handle")))
 void __wasm_export_exports_kumiko_plugin_plugin_handle_post_return(uint8_t * arg0) {
   switch ((int32_t) (int32_t) *((uint8_t*) (arg0 + 0))) {
     case 0: {
@@ -240,7 +240,7 @@ void kumiko_plugin_host_stream_close(uint32_t id) {
   __wasm_import_kumiko_plugin_host_stream_close((int32_t) (id));
 }
 
-__attribute__((__export_name__("kumiko:plugin/plugin@0.1.0#handle")))
+__attribute__((__export_name__("kumiko:plugin/plugin@1.0.0#handle")))
 uint8_t * __wasm_export_exports_kumiko_plugin_plugin_handle(uint8_t * arg, size_t arg0, uint8_t * arg1, size_t arg2) {
   kumiko_plugin_string_t arg3 = (kumiko_plugin_string_t) { (uint8_t*)(arg), (arg0) };
   kumiko_plugin_string_t arg4 = (kumiko_plugin_string_t) { (uint8_t*)(arg1), (arg2) };
@@ -276,20 +276,20 @@ uint8_t * __wasm_export_exports_kumiko_plugin_plugin_handle(uint8_t * arg, size_
   return ptr;
 }
 
-__attribute__((__export_name__("kumiko:plugin/plugin@0.1.0#on-notify")))
+__attribute__((__export_name__("kumiko:plugin/plugin@1.0.0#on-notify")))
 void __wasm_export_exports_kumiko_plugin_plugin_on_notify(uint8_t * arg, size_t arg0, uint8_t * arg1, size_t arg2) {
   kumiko_plugin_string_t arg3 = (kumiko_plugin_string_t) { (uint8_t*)(arg), (arg0) };
   kumiko_plugin_string_t arg4 = (kumiko_plugin_string_t) { (uint8_t*)(arg1), (arg2) };
   exports_kumiko_plugin_plugin_on_notify(&arg3, &arg4);
 }
 
-__attribute__((__export_name__("kumiko:plugin/plugin@0.1.0#on-stream")))
+__attribute__((__export_name__("kumiko:plugin/plugin@1.0.0#on-stream")))
 void __wasm_export_exports_kumiko_plugin_plugin_on_stream(int32_t arg, uint8_t * arg0, size_t arg1) {
   kumiko_plugin_list_u8_t arg2 = (kumiko_plugin_list_u8_t) { (uint8_t*)(arg0), (arg1) };
   exports_kumiko_plugin_plugin_on_stream((uint32_t) (arg), &arg2);
 }
 
-__attribute__((__export_name__("kumiko:plugin/plugin@0.1.0#on-stream-close")))
+__attribute__((__export_name__("kumiko:plugin/plugin@1.0.0#on-stream-close")))
 void __wasm_export_exports_kumiko_plugin_plugin_on_stream_close(int32_t arg) {
   exports_kumiko_plugin_plugin_on_stream_close((uint32_t) (arg));
 }

@@ -16,7 +16,7 @@ workspace = true
 default = ["editor-default"]
 # The default editor view (`kumiko-editor-view`).
 editor-default = ["dep:kumiko-editor-view"]
-# Another editor: the distribution adds `src/editor_alt.rs` with an `EditorProvider`.
+# Another editor: `src/editor_alt.rs` (a stub here; a distribution brings its own).
 alt-editor = []
 
 [dependencies]

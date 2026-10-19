@@ -64,7 +64,7 @@ kumiko kit export my.kit.id "Name"  # снимок текущего состав
 | Feature | Что даёт |
 |---|---|
 | `editor-default` (по умолчанию) | `kumiko-editor-view`: редактор E8 |
-| `alt-editor` | Свой редактор: дистрибутив кладёт `app/kumiko/src/editor_alt.rs` с `pub struct Editors`, реализующим `kumiko_ui::editor::EditorProvider` |
+| `alt-editor` | Свой редактор: `app/kumiko/src/editor_alt.rs` (в репозитории заглушка, показывающая текст) с `pub struct Editors`, реализующим `kumiko_ui::editor::EditorProvider` |
 
 Без обеих features сборка останавливается с `compile_error!`. Остальные L1-крейты (`kumiko-ui`, `kumiko-terminal-view`) подключаются так же через трейты `EditorProvider`, `TerminalProvider`, поэтому замена редактора не затрагивает ядро и плагины.
 

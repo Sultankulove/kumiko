@@ -4,7 +4,7 @@
 id = "kumiko.java"
 name = "Java"
 version = "0.1.0"
-api = "^0.1"
+api = "^1.0"
 kind = "process"
 entry = "bin/kumiko-java"
 permissions = ["fs.workspace", "fs.home", "process.spawn", "network"]

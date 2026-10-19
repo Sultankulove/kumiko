@@ -5,7 +5,7 @@
 id = "kumiko.terminal"
 name = "Terminal"
 version = "0.1.0"
-api = "^0.1"
+api = "^1.0"
 kind = "wasm"
 entry = "plugin.wasm"
 permissions = ["process.spawn"]

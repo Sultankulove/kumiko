@@ -50,6 +50,7 @@ struct Project {
 
 /// The Maven project with `kumiko.java` installed; `settings` go to the user settings file.
 async fn open(settings: &str) -> Project {
+    fixtures::build_java_grammar();
     let settings = settings.to_owned();
     let ide = Headless::start_with(move |options| {
         let source = plugin_source(options.dirs.data_dir());

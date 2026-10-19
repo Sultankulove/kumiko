@@ -39,6 +39,8 @@ use crate::problems::{self, Group, Problem, Severity};
 use crate::quick_open::{self, Action, Item, Mode, QuickOpen};
 use crate::state::{self, GroupState, WorkspaceState};
 use crate::tabs::{Split, Tab, Tabs};
+
+mod language;
 use crate::tree::{Entry, FileTree, Row};
 
 #[cfg(windows)]
@@ -95,6 +97,8 @@ pub struct Workbench {
     project_focus: FocusHandle,
     editor_focus: FocusHandle,
     focus_request: Option<FocusTarget>,
+    /// A position to show once the file's editor exists (Problems, Go to Declaration).
+    reveal: Option<(Uri, kumiko_types::Position)>,
     /// Focus flags last published as context keys.
     published_focus: Option<(bool, bool)>,
     /// Chords typed so far of a multi-key binding.
@@ -112,6 +116,11 @@ pub struct Workbench {
     provider: Rc<dyn EditorProvider>,
     /// The last message for the status bar (e.g. a failed command).
     message: Option<String>,
+    /// Symbols of a file for `@` in Quick Open, usages for Alt+F7, the place a rename is
+    /// for.
+    symbols: Option<(Uri, Vec<kumiko_core::language::Symbol>)>,
+    usages: Vec<Item>,
+    language_target: Option<(Uri, kumiko_types::Position)>,
     a11y: Option<Bridge>,
     /// The open Quick Open popup and its focus.
     quick_open: Option<QuickOpen>,
@@ -164,6 +173,7 @@ impl Workbench {
             project_focus: cx.focus_handle(),
             editor_focus: cx.focus_handle(),
             focus_request: Some(FocusTarget::Project),
+            reveal: None,
             published_focus: None,
             pending: Vec::new(),
             menus: Vec::new(),
@@ -176,6 +186,9 @@ impl Workbench {
             editors: HashMap::new(),
             provider,
             message: None,
+            symbols: None,
+            usages: Vec::new(),
+            language_target: None,
             a11y: None,
             started: Some(started),
             shown: false,
@@ -237,8 +250,17 @@ impl Workbench {
     fn apply(&mut self, command: UiCommand, cx: &mut Context<Self>) {
         match command {
             UiCommand::Toggle(window) => self.toggle_tool_window(window),
-            UiCommand::OpenFile(uri) => self.open_file(uri, cx),
-            UiCommand::QuickOpen(mode) => self.open_quick(mode),
+            UiCommand::OpenFile(uri, position) => {
+                self.reveal = position.map(|p| (uri.clone(), p));
+                self.open_file(uri, cx)
+            }
+            UiCommand::QuickOpen(mode) => {
+                self.open_quick(mode);
+                self.ensure_symbols(cx);
+            }
+            UiCommand::FindUsages => self.find_usages(cx),
+            UiCommand::Rename => self.open_rename(cx),
+            UiCommand::Reformat => self.reformat(cx),
             UiCommand::SelectTheme => {
                 self.open_menu = None;
                 self.quick_open = Some(QuickOpen::picker(Mode::Themes));
@@ -375,6 +397,8 @@ impl Workbench {
             "plugin.*",
             "document.changed",
             "document.saved",
+            "language.diagnosticsChanged",
+            "language.statusChanged",
         ];
         let mut events = core.events().subscribe(EventFilter::topics(topics));
         cx.spawn(async move |this, cx| {
@@ -407,6 +431,11 @@ impl Workbench {
         };
         if event.topic.starts_with("document.") {
             self.refresh_dirty(cx);
+        } else if event.topic == "language.statusChanged" {
+            cx.notify();
+        } else if event.topic == "language.diagnosticsChanged" {
+            self.refresh_problems();
+            cx.notify();
         } else if event.topic.starts_with("config.") || event.topic.starts_with("plugin.") {
             if event.topic.starts_with("config.") {
                 self.reload_settings(cx);
@@ -661,6 +690,20 @@ impl Workbench {
         }
     }
 
+    /// Shows the requested position once the active editor is the file's.
+    fn apply_reveal(&mut self, cx: &mut Context<Self>) {
+        let Some((uri, position)) = &self.reveal else {
+            return;
+        };
+        let Some(editor) = self.active_editor() else {
+            return;
+        };
+        if self.split.tabs().active().is_some_and(|t| &t.uri == uri) {
+            (editor.goto)(*position, cx);
+            self.reveal = None;
+        }
+    }
+
     /// The editor of the active group's active tab.
     fn active_editor(&self) -> Option<&EditorHandle> {
         let tab = self.split.tabs().active()?;
@@ -691,6 +734,10 @@ impl Workbench {
             selection: p.editor_selection,
             caret: p.caret,
             find_match: p.find_match,
+            error: p.error,
+            warning: p.warning,
+            popup: p.popup,
+            popup_selection: p.selection,
             syntax: p
                 .syntax
                 .iter()
@@ -744,8 +791,10 @@ impl Workbench {
             Mode::Files => self.file_items(&query),
             Mode::Commands => self.command_items(&query),
             Mode::Line => self.line_items(&query),
-            Mode::Symbols => vec![self.note("quickOpen.symbolsUnavailable")],
+            Mode::Symbols => self.symbol_items(&query),
             Mode::Themes => self.theme_items(&query),
+            Mode::Usages => self.usage_items(&query),
+            Mode::Rename => self.rename_items(&query),
         };
         let items = if items.is_empty() {
             vec![self.note("quickOpen.noResults")]
@@ -976,6 +1025,11 @@ impl Workbench {
         if action == Action::None {
             return;
         }
+        let query = self
+            .quick_open
+            .as_ref()
+            .map(|q| q.query().to_owned())
+            .unwrap_or_default();
         self.close_quick();
         match action {
             Action::OpenFile(uri) => {
@@ -985,6 +1039,15 @@ impl Workbench {
             Action::SetTheme(id) => {
                 self.execute_id("workbench.setTheme", vec![Value::from(id)], cx)
             }
+            Action::OpenAt(uri, at) => {
+                let args = vec![
+                    Value::from(uri.as_str()),
+                    Value::from(at.line),
+                    Value::from(at.character),
+                ];
+                self.execute_id("workbench.openFile", args, cx)
+            }
+            Action::Rename => self.rename(query, cx),
             Action::GotoLine(line) => {
                 if let Some(editor) = self.active_editor() {
                     (editor.goto_line)(line, cx);
@@ -1039,6 +1102,10 @@ impl Workbench {
                 quick.input.delete();
                 true
             }
+            "a" if modifiers.control || modifiers.platform => {
+                quick.input.select_all();
+                false
+            }
             "left" => {
                 quick.input.left();
                 false
@@ -1070,6 +1137,7 @@ impl Workbench {
         cx.stop_propagation();
         if edited {
             self.refresh_quick();
+            self.ensure_symbols(cx);
         }
         cx.notify();
     }
@@ -1102,6 +1170,7 @@ impl Workbench {
                 },
                 message,
                 location,
+                position: None,
             });
         }
         for problem in self.core.resources().problems() {
@@ -1110,6 +1179,7 @@ impl Workbench {
                 source: name(&problem.path),
                 message: problem.message,
                 location: file(&problem.path),
+                position: None,
             });
         }
         let registry = self.core.plugins();
@@ -1119,6 +1189,7 @@ impl Workbench {
                 source: self.t("problems.plugins"),
                 message: message.clone(),
                 location: None,
+                position: None,
             });
         }
         let host = self.core.plugin_host();
@@ -1132,6 +1203,7 @@ impl Workbench {
                         source: id.to_string(),
                         message: reason.clone(),
                         location: manifest.clone(),
+                        position: None,
                     });
                 }
             }
@@ -1141,6 +1213,30 @@ impl Workbench {
                     source: id.to_string(),
                     message: host.reason(id).unwrap_or_else(|| self.t("problems.failed")),
                     location: None,
+                    position: None,
+                });
+            }
+        }
+        // Language servers: one group per file, "line:column message" as IntelliJ lists them.
+        for (uri, diagnostics) in self.core.language().all_diagnostics() {
+            let source = file_name(&uri);
+            for d in diagnostics {
+                let severity = match d.severity {
+                    kumiko_core::language::Severity::Error => Severity::Error,
+                    kumiko_core::language::Severity::Warning => Severity::Warning,
+                    _ => Severity::Info,
+                };
+                problems.push(Problem {
+                    severity,
+                    source: source.clone(),
+                    message: format!(
+                        "{}:{}  {}",
+                        d.range.start.line + 1,
+                        d.range.start.character + 1,
+                        d.message
+                    ),
+                    location: Some(uri.clone()),
+                    position: Some(d.range.start),
                 });
             }
         }
@@ -1541,6 +1637,7 @@ fn place(rect: Rect) -> gpui::Div {
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_editors(window, cx);
+        self.apply_reveal(cx);
         if self.shown
             && let Some(started) = self.started.take()
         {
@@ -1676,6 +1773,7 @@ impl Workbench {
 
     fn status_bar(&self, rect: Rect, cx: &App) -> AnyElement {
         let p = &self.palette;
+        let p_muted = p.muted;
         let format = self
             .split
             .tabs()
@@ -1710,7 +1808,23 @@ impl Workbench {
             .px_2()
             .text_size(px(12.0))
             .child(message)
-            .child(right)
+            .child(
+                div()
+                    .flex()
+                    .gap_4()
+                    // Language servers at work, as IntelliJ shows background tasks.
+                    .children(self.core.language().progress().into_iter().last().map(|p| {
+                        let mut text = format!("{}: {}", p.server, p.title);
+                        if let Some(message) = p.message {
+                            text.push_str(&format!(" {message}"));
+                        }
+                        if let Some(percent) = p.percentage {
+                            text.push_str(&format!(" {percent}%"));
+                        }
+                        div().text_color(rgba(p_muted)).child(text)
+                    }))
+                    .child(right),
+            )
             .into_any_element()
     }
 
@@ -1846,6 +1960,21 @@ impl Workbench {
                         .flex()
                         .items_center()
                         .gap_2()
+                        .when_some(
+                            problem.location.clone().zip(problem.position),
+                            |d, (uri, at)| {
+                                d.hover(|d| d.bg(rgba(p.hover))).on_click(cx.listener(
+                                    move |this, _: &ClickEvent, _window, cx| {
+                                        let args = vec![
+                                            Value::from(uri.as_str()),
+                                            Value::from(at.line),
+                                            Value::from(at.character),
+                                        ];
+                                        this.execute_id("workbench.openFile", args, cx);
+                                    },
+                                ))
+                            },
+                        )
                         .child(div().text_color(rgba(color)).child("●"))
                         .child(problem.message.clone())
                         .into_any_element(),
@@ -1957,15 +2086,29 @@ impl Workbench {
             .border_b_1()
             .border_color(rgba(p.border))
             .whitespace_nowrap()
-            .child(before.to_owned())
-            .child(caret)
-            .child(after.to_owned())
+            .map(|d| {
+                if quick.input.is_all_selected() {
+                    // A suggested answer (Rename): selected, typing replaces it.
+                    d.child(div().bg(rgba(p.selection)).child(before.to_owned()))
+                        .child(caret)
+                } else {
+                    d.child(before.to_owned())
+                        .child(caret)
+                        .child(after.to_owned())
+                }
+            })
             .when(quick.input.text().is_empty(), |d| {
+                let placeholder = match quick.mode() {
+                    Mode::Usages => "usages.placeholder",
+                    Mode::Rename => "rename.prompt",
+                    Mode::Themes => "quickOpen.themes",
+                    _ => "quickOpen.placeholder",
+                };
                 d.child(
                     div()
                         .pl_2()
                         .text_color(rgba(p.muted))
-                        .child(self.t("quickOpen.placeholder")),
+                        .child(self.t(placeholder)),
                 )
             });
         let first = quick.selected.saturating_sub(QUICK_ROWS - 1);

@@ -31,6 +31,10 @@ use kumiko_protocol::methods::command::{ExecuteCommand, InvokeCommand, SetContex
 use kumiko_protocol::methods::lifecycle::{
     Exit, HostCapabilities, Initialize, InitializeParams, Initialized, Shutdown, WorkspaceInfo,
 };
+use kumiko_protocol::methods::lsp::{
+    LaunchSpec, LspMessageParams, LspMiddleware, LspSendRequest, MiddlewareResult, ResolveLaunch,
+    ResolveLaunchParams,
+};
 use kumiko_protocol::methods::service::{
     ServiceCall, ServiceCallParams, ServiceInvoke, ServiceInvokeParams,
 };
@@ -64,6 +68,13 @@ pub trait HostApi: Send + Sync + 'static {
 
     /// The user's choice among several providers (`interfaces.<id>.provider`).
     fn preferred_provider(&self, interface: &InterfaceId) -> Option<PluginId>;
+
+    /// `lsp/sendRequest`: a request to a language server the plugin contributes.
+    fn lsp_send_request(
+        &self,
+        caller: &PluginId,
+        params: LspMessageParams,
+    ) -> BoxFuture<'static, Result<Value, ResponseError>>;
 }
 
 /// Per-plugin part of `initialize`.
@@ -274,6 +285,8 @@ struct SlotState {
     /// Removed from the host (uninstalled, disabled, replaced); never starts again.
     retired: bool,
     crashes: VecDeque<Instant>,
+    /// LSP methods the running plugin intercepts (`lspMiddleware` of its `initialize`).
+    lsp_middleware: Vec<String>,
 }
 
 struct Slot {
@@ -299,6 +312,7 @@ impl Slot {
                     stopping: false,
                     retired: false,
                     crashes: VecDeque::new(),
+                    lsp_middleware: Vec::new(),
                 }),
                 lifecycle: tokio::sync::Mutex::new(()),
             })
@@ -486,6 +500,41 @@ impl PluginHost {
         connection.request::<InvokeCommand>(&call).await
     }
 
+    /// Asks the plugin how to start one of its language servers (`lsp/resolveLaunch`),
+    /// starting the plugin if needed.
+    pub async fn resolve_launch(
+        &self,
+        plugin: &PluginId,
+        params: ResolveLaunchParams,
+    ) -> Result<LaunchSpec, ResponseError> {
+        let connection = self.ensure_running(plugin).await?;
+        connection.request::<ResolveLaunch>(&params).await
+    }
+
+    /// LSP methods the running plugin intercepts; empty when it does not run.
+    pub fn lsp_middleware(&self, plugin: &PluginId) -> Vec<String> {
+        self.slot(plugin)
+            .map(|slot| {
+                let state = lock(&slot.state);
+                if state.running.is_some() {
+                    state.lsp_middleware.clone()
+                } else {
+                    Vec::new()
+                }
+            })
+            .unwrap_or_default()
+    }
+
+    /// Lets the plugin handle an LSP message it declared in `lspMiddleware`.
+    pub async fn lsp_middleware_request(
+        &self,
+        plugin: &PluginId,
+        params: LspMessageParams,
+    ) -> Result<MiddlewareResult, ResponseError> {
+        let connection = self.ensure_running(plugin).await?;
+        connection.request::<LspMiddleware>(&params).await
+    }
+
     /// Starts the plugin unless it runs already; waits for the handshake.
     pub async fn ensure_running(
         &self,
@@ -608,6 +657,7 @@ impl PluginHost {
                     ExecuteCommand::METHOD.into(),
                     SetContext::METHOD.into(),
                     ServiceCall::METHOD.into(),
+                    LspSendRequest::METHOD.into(),
                 ],
                 experimental: None,
             },
@@ -617,7 +667,8 @@ impl PluginHost {
         };
         let conn = &running.conn;
         let handshake = match conn.request::<Initialize>(&params, Some(timeout)).await {
-            Ok(_) => {
+            Ok(result) => {
+                lock(&slot.state).lsp_middleware = result.plugin_capabilities.lsp_middleware;
                 conn.notify::<Initialized>(&()).await;
                 Ok(())
             }
@@ -1023,6 +1074,10 @@ impl Bridge {
                         result(())
                     }),
             ),
+            LspSendRequest::METHOD => match params(method, request) {
+                Ok(call) => self.api.lsp_send_request(&plugin, call),
+                Err(error) => ready(Err(error)),
+            },
             ServiceCall::METHOD => {
                 let call = match params(method, request) {
                     Ok(call) => call,

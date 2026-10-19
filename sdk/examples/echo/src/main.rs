@@ -8,10 +8,15 @@
 //! - `echo.spawn` starts a child process that sleeps until killed and returns its pid
 //!   (descendants must not outlive the plugin);
 //! - interface `kumiko.echo.api`, method `ping`, answers with its params and the caller.
+//! - `echo.lsp [server, method, params]` sends a request to its language server;
+//! - intercepts `fake/question` of its server and answers it itself;
+//! - language server `fake`: `kumiko-fake-lsp` installed next to the plugin binary, run in the
+//!   workspace folder.
 
 use std::process::{ExitCode, Stdio};
 
 use kumiko_plugin_sdk::process::Plugin;
+use kumiko_plugin_sdk::protocol::methods::lsp::{LaunchSpec, MiddlewareResult};
 use kumiko_plugin_sdk::types::InterfaceId;
 use kumiko_plugin_sdk::{ErrorCode, ResponseError};
 use serde_json::{Value, json};
@@ -65,6 +70,50 @@ async fn main() -> ExitCode {
                     kumiko_plugin_sdk::RpcError::Remote(error) => error,
                     other => ResponseError::new(ErrorCode::InternalError, other.to_string()),
                 })
+        })
+        .command("echo.lsp", |ctx, args| async move {
+            let text = |i: usize| {
+                args.get(i)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            let params = args.get(2).cloned().unwrap_or(Value::Null);
+            ctx.lsp_request(text(0), text(1), params)
+                .await
+                .map_err(|error| match error {
+                    kumiko_plugin_sdk::RpcError::Remote(error) => error,
+                    other => ResponseError::new(ErrorCode::InternalError, other.to_string()),
+                })
+        })
+        .lsp_middleware("fake/question", |_ctx, message| async move {
+            Ok(MiddlewareResult::Respond {
+                result: json!({ "answer": 42, "server": message.server_id }),
+            })
+        })
+        .language_server("fake", |_ctx, params| async move {
+            let internal =
+                |e: std::io::Error| ResponseError::new(ErrorCode::InternalError, e.to_string());
+            let exe = std::env::current_exe().map_err(internal)?;
+            let server =
+                exe.with_file_name(format!("kumiko-fake-lsp{}", std::env::consts::EXE_SUFFIX));
+            if !server.exists() {
+                return Err(ResponseError::new(
+                    ErrorCode::NotFound,
+                    format!("{} is not installed", server.display()),
+                ));
+            }
+            let command = server.to_string_lossy().into_owned();
+            Ok(LaunchSpec {
+                command,
+                args: Vec::new(),
+                env: Default::default(),
+                cwd: params
+                    .workspace_folder
+                    .to_file_path()
+                    .map(|p| p.to_string_lossy().into_owned()),
+                initialization_options: Some(json!({ "language": params.language_id })),
+            })
         })
         .interface(
             "kumiko.echo.api",

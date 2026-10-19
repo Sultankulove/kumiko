@@ -19,6 +19,12 @@ pub struct EditorTheme {
     pub selection: u32,
     pub caret: u32,
     pub find_match: u32,
+    /// Wavy underlines of errors and warnings.
+    pub error: u32,
+    pub warning: u32,
+    /// Completion and intention popups.
+    pub popup: u32,
+    pub popup_selection: u32,
     /// Syntax token styles: capture name (`keyword`, `function.method`, …), colour, bold,
     /// italic. A capture without its own style uses its dotted parent's.
     pub syntax: Vec<(String, u32, bool, bool)>,
@@ -34,6 +40,10 @@ pub struct EditorStatus {
     pub line: usize,
     pub column: usize,
     pub carets: usize,
+    /// The primary caret as a document position (0-based, UTF-8 byte in the line) and the
+    /// identifier around it, for language commands of the workbench.
+    pub caret: kumiko_types::Position,
+    pub word: String,
     /// The last failure (e.g. editing a read-only file).
     pub message: Option<String>,
 }
@@ -42,6 +52,8 @@ pub struct EditorStatus {
 pub type RunCommand = Box<dyn Fn(&str, &mut App) -> bool>;
 /// Puts the caret on a 1-based line.
 pub type GotoLine = Box<dyn Fn(usize, &mut App)>;
+/// Puts the caret at a position (Problems, Go to Declaration in another file).
+pub type Goto = Box<dyn Fn(kumiko_types::Position, &mut App)>;
 /// Applies new colours and font.
 pub type SetTheme = Box<dyn Fn(EditorTheme, &mut App)>;
 
@@ -53,6 +65,7 @@ pub struct EditorHandle {
     pub run: RunCommand,
     /// Puts the caret on a 1-based line and scrolls to it.
     pub goto_line: GotoLine,
+    pub goto: Goto,
     pub status: Box<dyn Fn(&App) -> EditorStatus>,
     pub set_theme: SetTheme,
 }

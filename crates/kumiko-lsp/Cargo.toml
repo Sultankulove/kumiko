@@ -15,3 +15,13 @@ workspace = true
 kumiko-types.workspace = true
 kumiko-protocol.workspace = true
 kumiko-service-api.workspace = true
+lsp-types.workspace = true
+ropey.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "io-util", "macros", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread"] }

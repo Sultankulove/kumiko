@@ -18,6 +18,7 @@ use kumiko_project::ProjectService;
 use kumiko_protocol::common::CommandCall;
 use kumiko_protocol::events::{InterfaceAvailabilityChanged, PluginState, PluginStateChanged};
 use kumiko_protocol::methods::lifecycle::WorkspaceInfo;
+use kumiko_protocol::methods::lsp::LspMessageParams;
 use kumiko_protocol::{ErrorCode, ResponseError};
 use kumiko_service_api::wasm::WasmRuntime;
 use kumiko_service_api::when::WhenExpr;
@@ -31,6 +32,8 @@ pub(crate) struct Services {
     pub events: Arc<dyn EventSink>,
     /// Locale forced by the options; otherwise it follows the settings.
     pub locale: Option<String>,
+    /// The Language service, set once the core is assembled (plugins exist before it).
+    pub language: Arc<std::sync::OnceLock<kumiko_lsp::LanguageService>>,
 }
 
 /// Installed plugins and everything the core registered for them.
@@ -57,6 +60,7 @@ impl PluginManager {
             config: services.config.clone(),
             project: services.project.clone(),
             locale: services.locale.clone(),
+            language: services.language.clone(),
         });
         let host = PluginHost::new(
             registry.clone(),
@@ -328,9 +332,33 @@ struct CoreHostApi {
     config: Arc<ConfigService>,
     project: Arc<ProjectService>,
     locale: Option<String>,
+    language: Arc<std::sync::OnceLock<kumiko_lsp::LanguageService>>,
 }
 
 impl HostApi for CoreHostApi {
+    fn lsp_send_request(
+        &self,
+        caller: &PluginId,
+        params: LspMessageParams,
+    ) -> BoxFuture<'static, Result<Value, ResponseError>> {
+        let language = self.language.get().cloned();
+        let caller = caller.to_string();
+        Box::pin(async move {
+            let language = language.ok_or_else(|| {
+                ResponseError::new(ErrorCode::InternalError, "the core is starting")
+            })?;
+            language
+                .send_request(&caller, &params.server_id, &params.method, params.params)
+                .await
+                .map_err(|error| match error {
+                    kumiko_lsp::LspError::Server { code, message } => {
+                        ResponseError::new(ErrorCode::InternalError, format!("{code}: {message}"))
+                    }
+                    other => ResponseError::new(ErrorCode::NotFound, other.to_string()),
+                })
+        })
+    }
+
     fn execute_command(
         &self,
         _caller: &PluginId,

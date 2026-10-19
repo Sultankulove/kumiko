@@ -10,4 +10,5 @@ mod e4_process;
 mod e5_wasm;
 mod e7_quick_open;
 mod e8_syntax;
+mod e9_language;
 mod fixtures;

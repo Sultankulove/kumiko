@@ -679,6 +679,10 @@ fn all_samples() -> Samples {
         interface: InterfaceId::new("org.example.repository").unwrap(),
         available: false,
     });
+    s.event(events::DiagnosticsChanged {
+        uris: vec![Uri::parse("file:///w/src/A.txt").unwrap()],
+    });
+    s.event(events::LanguageStatusChanged {});
     s
 }
 

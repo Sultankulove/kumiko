@@ -1,7 +1,7 @@
 //! The Problems tool window as data: problems from every source the core knows (settings,
-//! resources, plugins; language diagnostics join with LSP in E9), grouped by where they are.
+//! resources, plugins; language servers), grouped by where they are.
 
-use kumiko_types::Uri;
+use kumiko_types::{Position, Uri};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Severity {
@@ -18,6 +18,8 @@ pub struct Problem {
     pub message: String,
     /// A file to open for it, if there is one.
     pub location: Option<Uri>,
+    /// Where in the file (language diagnostics).
+    pub position: Option<Position>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,6 +80,7 @@ mod tests {
             source: source.into(),
             message: message.into(),
             location: None,
+            position: None,
         }
     }
 

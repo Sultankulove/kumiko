@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use kumiko_core::CoreApi;
 use kumiko_core::commands::{CommandError, CommandFuture, CommandInfo, Owner};
-use kumiko_types::{CommandId, Uri};
+use kumiko_types::{CommandId, Position, Uri};
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -17,8 +17,9 @@ use crate::tabs::Orientation;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UiCommand {
     Toggle(ToolWindow),
-    /// `workbench.openFile [uri]`
-    OpenFile(Uri),
+    /// `workbench.openFile [uri, line?, character?]`: the position is 0-based, the character a
+    /// UTF-8 byte in the line.
+    OpenFile(Uri, Option<Position>),
     /// Quick Open in a mode: files, commands, a line.
     QuickOpen(Mode),
     CloseEditor,
@@ -32,6 +33,10 @@ pub enum UiCommand {
     Unsplit,
     NextEditor,
     PreviousEditor,
+    /// Language commands at the active editor's caret.
+    FindUsages,
+    Rename,
+    Reformat,
     Quit,
 }
 
@@ -73,6 +78,12 @@ const COMMANDS: &[(&str, Parse)] = &[
     }),
     ("workbench.selectTheme", |_| Ok(UiCommand::SelectTheme)),
     ("workbench.setTheme", set_theme),
+    ("workbench.fileStructure", |_| {
+        Ok(UiCommand::QuickOpen(Mode::Symbols))
+    }),
+    ("workbench.findUsages", |_| Ok(UiCommand::FindUsages)),
+    ("workbench.rename", |_| Ok(UiCommand::Rename)),
+    ("workbench.reformat", |_| Ok(UiCommand::Reformat)),
     ("workbench.quit", |_| Ok(UiCommand::Quit)),
 ];
 
@@ -91,9 +102,14 @@ fn open_file(args: &[Value]) -> Result<UiCommand, String> {
         .first()
         .and_then(Value::as_str)
         .ok_or("expected the file's URI")?;
-    Uri::parse(uri)
-        .map(UiCommand::OpenFile)
-        .map_err(|e| e.to_string())
+    let uri = Uri::parse(uri).map_err(|e| e.to_string())?;
+    let number = |i: usize| {
+        args.get(i)
+            .and_then(Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok())
+    };
+    let position = number(1).map(|line| Position::new(line, number(2).unwrap_or(0)));
+    Ok(UiCommand::OpenFile(uri, position))
 }
 
 /// Registers the workbench commands and the editor ones; their requests arrive on
@@ -163,7 +179,17 @@ mod tests {
     fn open_file_takes_a_uri() {
         assert_eq!(
             open_file(&[json!("file:///w/a.txt")]),
-            Ok(UiCommand::OpenFile(Uri::parse("file:///w/a.txt").unwrap()))
+            Ok(UiCommand::OpenFile(
+                Uri::parse("file:///w/a.txt").unwrap(),
+                None
+            ))
+        );
+        assert_eq!(
+            open_file(&[json!("file:///w/a.txt"), json!(3), json!(7)]),
+            Ok(UiCommand::OpenFile(
+                Uri::parse("file:///w/a.txt").unwrap(),
+                Some(Position::new(3, 7))
+            ))
         );
         assert!(open_file(&[]).is_err());
         assert!(open_file(&[json!("not a uri")]).is_err());

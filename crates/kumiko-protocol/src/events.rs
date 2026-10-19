@@ -216,3 +216,24 @@ core_event!(
     State,
     "A provider of an inter-plugin interface appeared or disappeared."
 );
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DiagnosticsChanged {
+    /// Files whose merged diagnostics changed; read them from the Language service.
+    pub uris: Vec<Uri>,
+}
+core_event!(
+    DiagnosticsChanged,
+    "language.diagnosticsChanged",
+    State,
+    "Diagnostics of these files changed."
+);
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct LanguageStatusChanged {}
+core_event!(
+    LanguageStatusChanged,
+    "language.statusChanged",
+    Notification,
+    "Language servers started, stopped or reported progress; read the status again."
+);

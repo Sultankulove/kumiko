@@ -15,6 +15,10 @@ pub enum Mode {
     Symbols,
     /// A fixed list to pick from (no prefix): colour themes.
     Themes,
+    /// Usages of a symbol (Alt+F7), filtered by what is typed.
+    Usages,
+    /// The new name of a symbol (Shift+F6): the input is the answer.
+    Rename,
 }
 
 impl Mode {
@@ -25,7 +29,7 @@ impl Mode {
             Mode::Commands => ">",
             Mode::Line => ":",
             Mode::Symbols => "@",
-            Mode::Themes => "",
+            Mode::Themes | Mode::Usages | Mode::Rename => "",
         }
     }
 }
@@ -38,6 +42,10 @@ pub enum Action {
     GotoLine(usize),
     /// Make the theme with this id the current one.
     SetTheme(String),
+    /// Open a file at a position (usages, symbols).
+    OpenAt(Uri, kumiko_types::Position),
+    /// Rename to what was typed.
+    Rename,
     /// Informational row (e.g. "no results").
     None,
 }
@@ -74,6 +82,19 @@ impl QuickOpen {
     /// Opens a picker: the input filters a fixed list.
     pub fn picker(mode: Mode) -> Self {
         Self {
+            fixed: Some(mode),
+            ..Self::default()
+        }
+    }
+
+    /// Opens a prompt: a fixed mode whose input starts with `text`.
+    pub fn prompt(mode: Mode, text: &str) -> Self {
+        Self {
+            input: {
+                let mut input = LineInput::with_text(text);
+                input.select_all();
+                input
+            },
             fixed: Some(mode),
             ..Self::default()
         }

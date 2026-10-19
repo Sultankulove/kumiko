@@ -32,6 +32,10 @@ use kumiko_protocol::methods::command::{
 use kumiko_protocol::methods::lifecycle::{
     Exit, Initialize, InitializeParams, InitializeResult, Initialized, PluginCapabilities, Shutdown,
 };
+use kumiko_protocol::methods::lsp::{
+    LaunchSpec, LspMessageParams, LspMiddleware, LspSendRequest, MiddlewareResult, ResolveLaunch,
+    ResolveLaunchParams,
+};
 use kumiko_protocol::methods::service::{ServiceCall, ServiceCallParams, ServiceInvoke};
 use kumiko_protocol::{ErrorCode, ResponseError};
 use kumiko_types::{CommandId, InterfaceId, PluginId};
@@ -40,6 +44,11 @@ type CommandFuture = Pin<Box<dyn Future<Output = Result<Value, ResponseError>> +
 type CommandFn = Arc<dyn Fn(Context, Vec<Value>) -> CommandFuture + Send + Sync>;
 type InterfaceFn = Arc<dyn Fn(Context, PluginId, Value) -> CommandFuture + Send + Sync>;
 type Interfaces = HashMap<(String, String), InterfaceFn>;
+type LaunchFuture = Pin<Box<dyn Future<Output = Result<LaunchSpec, ResponseError>> + Send>>;
+type LaunchFn = Arc<dyn Fn(Context, ResolveLaunchParams) -> LaunchFuture + Send + Sync>;
+type MiddlewareFuture =
+    Pin<Box<dyn Future<Output = Result<MiddlewareResult, ResponseError>> + Send>>;
+type MiddlewareFn = Arc<dyn Fn(Context, LspMessageParams) -> MiddlewareFuture + Send + Sync>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SdkError {
@@ -105,6 +114,23 @@ impl Context {
             })
             .await
     }
+
+    /// A request to a language server this plugin contributes (`lsp/sendRequest`), positions in
+    /// the server's encoding.
+    pub async fn lsp_request(
+        &self,
+        server_id: impl Into<String>,
+        method: impl Into<String>,
+        params: Value,
+    ) -> Result<Value, RpcError> {
+        self.peer
+            .request::<LspSendRequest>(&LspMessageParams {
+                server_id: server_id.into(),
+                method: method.into(),
+                params,
+            })
+            .await
+    }
 }
 
 /// A process plugin under construction.
@@ -112,6 +138,8 @@ impl Context {
 pub struct Plugin {
     commands: HashMap<String, CommandFn>,
     interfaces: Interfaces,
+    launchers: HashMap<String, LaunchFn>,
+    middleware: HashMap<String, MiddlewareFn>,
     capabilities: PluginCapabilities,
 }
 
@@ -156,6 +184,31 @@ impl Plugin {
         self
     }
 
+    /// Tells the host how to start a language server of `[[contributes.languageServers]]`
+    /// (`lsp/resolveLaunch`, spec section 18). The host starts and talks to the server itself.
+    pub fn language_server<F, Fut>(mut self, server_id: &str, handler: F) -> Self
+    where
+        F: Fn(Context, ResolveLaunchParams) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<LaunchSpec, ResponseError>> + Send + 'static,
+    {
+        let handler: LaunchFn = Arc::new(move |ctx, params| Box::pin(handler(ctx, params)));
+        self.launchers.insert(server_id.to_owned(), handler);
+        self
+    }
+
+    /// Intercepts an LSP method of its servers: server requests and notifications, and
+    /// `workspace/executeCommand` the editor sends (client-side commands). The handler answers
+    /// itself (`Respond`) or lets the core go on (`Forward`).
+    pub fn lsp_middleware<F, Fut>(mut self, method: &str, handler: F) -> Self
+    where
+        F: Fn(Context, LspMessageParams) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<MiddlewareResult, ResponseError>> + Send + 'static,
+    {
+        let handler: MiddlewareFn = Arc::new(move |ctx, params| Box::pin(handler(ctx, params)));
+        self.middleware.insert(method.to_owned(), handler);
+        self
+    }
+
     /// Declares optional host-to-plugin methods the plugin handles.
     pub fn capabilities(mut self, capabilities: PluginCapabilities) -> Self {
         self.capabilities = capabilities;
@@ -179,10 +232,28 @@ impl Plugin {
         });
         let commands = Arc::new(self.commands);
         let interfaces = Arc::new(self.interfaces);
-        let capabilities = self.capabilities;
+        let launchers = Arc::new(self.launchers);
+        let middleware = Arc::new(self.middleware);
+        let mut capabilities = self.capabilities;
+        for method in middleware.keys() {
+            if !capabilities.lsp_middleware.contains(method) {
+                capabilities.lsp_middleware.push(method.clone());
+            }
+        }
+        capabilities.lsp_middleware.sort();
         let router_state = state.clone();
         let peer = Peer::spawn(reader, writer, PeerConfig::default(), move |peer| {
-            router(peer, router_state, commands, interfaces, capabilities)
+            router(
+                peer,
+                router_state,
+                Handlers {
+                    commands,
+                    interfaces,
+                    launchers,
+                    middleware,
+                },
+                capabilities,
+            )
         });
         tokio::select! {
             () = state.exit.notified() => Ok(()),
@@ -191,17 +262,34 @@ impl Plugin {
     }
 }
 
+/// What the plugin answers, by method.
+struct Handlers {
+    commands: Arc<HashMap<String, CommandFn>>,
+    interfaces: Arc<Interfaces>,
+    launchers: Arc<HashMap<String, LaunchFn>>,
+    middleware: Arc<HashMap<String, MiddlewareFn>>,
+}
+
 fn router(
     peer: Peer,
     state: Arc<State>,
-    commands: Arc<HashMap<String, CommandFn>>,
-    interfaces: Arc<Interfaces>,
+    handlers: Handlers,
     capabilities: PluginCapabilities,
 ) -> Router {
+    let Handlers {
+        commands,
+        interfaces,
+        launchers,
+        middleware,
+    } = handlers;
+    let middleware_state = state.clone();
+    let middleware_peer = peer.clone();
     let init_state = state.clone();
     let invoke_state = state.clone();
     let service_state = state.clone();
     let service_peer = peer.clone();
+    let launch_state = state.clone();
+    let launch_peer = peer.clone();
     Router::new()
         .on_request::<Initialize, _, _>(move |params| {
             let result = if crate::version::compatible(&params.api_version, PROTOCOL_VERSION) {
@@ -261,6 +349,49 @@ fn router(
                     ));
                 };
                 handler(Context { peer, init }, call.caller, call.params).await
+            }
+        })
+        .on_request::<ResolveLaunch, _, _>(move |params: ResolveLaunchParams| {
+            let init = lock(&launch_state.init).clone();
+            let handler = launchers.get(&params.server_id).cloned();
+            let peer = launch_peer.clone();
+            async move {
+                let Some(init) = init else {
+                    return Err(ResponseError::new(
+                        ErrorCode::InvalidRequest,
+                        "not initialized",
+                    ));
+                };
+                let Some(handler) = handler else {
+                    return Err(ResponseError::new(
+                        ErrorCode::NotFound,
+                        format!(
+                            "language server `{}` is not handled by this plugin",
+                            params.server_id
+                        ),
+                    ));
+                };
+                handler(Context { peer, init }, params).await
+            }
+        })
+        .on_request::<LspMiddleware, _, _>(move |params: LspMessageParams| {
+            let init = lock(&middleware_state.init).clone();
+            let handler = middleware.get(&params.method).cloned();
+            let peer = middleware_peer.clone();
+            async move {
+                let Some(init) = init else {
+                    return Err(ResponseError::new(
+                        ErrorCode::InvalidRequest,
+                        "not initialized",
+                    ));
+                };
+                match handler {
+                    Some(handler) => handler(Context { peer, init }, params).await,
+                    // Not ours after all: the core goes on as usual.
+                    None => Ok(MiddlewareResult::Forward {
+                        params: params.params,
+                    }),
+                }
             }
         })
         .on_request::<Shutdown, _, _>(|()| std::future::ready(Ok(())))

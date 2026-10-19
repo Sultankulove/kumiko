@@ -21,6 +21,10 @@ fn style(theme: &EditorTheme) -> EditorStyle {
         selection: rgba(theme.selection).into(),
         caret: rgba(theme.caret).into(),
         find_match: rgba(theme.find_match).into(),
+        error: rgba(theme.error).into(),
+        warning: rgba(theme.warning).into(),
+        popup_background: rgba(theme.popup).into(),
+        popup_selection: rgba(theme.popup_selection).into(),
         syntax: theme
             .syntax
             .iter()
@@ -51,7 +55,8 @@ impl EditorProvider for Editors {
         let entity = cx
             .new(|cx| EditorView::new(core.clone(), runtime.clone(), snapshot, style(&theme), cx));
         let focus = entity.read(cx).focus_handle(cx);
-        let (run, goto, status, themed) = (
+        let (run, goto, goto_position, status, themed) = (
+            entity.clone(),
             entity.clone(),
             entity.clone(),
             entity.clone(),
@@ -64,6 +69,9 @@ impl EditorProvider for Editors {
             goto_line: Box::new(move |line, cx| {
                 goto.update(cx, |view, cx| view.goto_line(line, cx))
             }),
+            goto: Box::new(move |position, cx| {
+                goto_position.update(cx, |view, cx| view.goto_position(position, cx))
+            }),
             status: Box::new(move |cx| {
                 let view = status.read(cx);
                 let (line, column) = view.caret_position();
@@ -71,7 +79,13 @@ impl EditorProvider for Editors {
                     line,
                     column,
                     carets: view.caret_count(),
-                    message: view.message.clone(),
+                    caret: view.caret_location(),
+                    word: view.word_at_caret(),
+                    // A failure first, else the problem under the caret, as IntelliJ shows it.
+                    message: view
+                        .message
+                        .clone()
+                        .or_else(|| view.diagnostic_at_caret().map(str::to_owned)),
                 }
             }),
             set_theme: Box::new(move |theme, cx| {

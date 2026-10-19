@@ -9,6 +9,7 @@ pub mod display;
 pub mod editing;
 pub mod find;
 pub mod movement;
+pub mod popup;
 pub mod search;
 pub mod selection;
 pub mod text;

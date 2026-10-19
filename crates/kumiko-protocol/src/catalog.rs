@@ -5,7 +5,8 @@ use schemars::{Schema, SchemaGenerator};
 
 use crate::events::{self, CoreEvent, DeliveryClass};
 use crate::methods::{
-    base, command, config, document, event, fs, lifecycle, lsp, process, service, task, ui,
+    base, command, config, document, event, fs, lifecycle, lsp, process, service, task, terminal,
+    ui,
 };
 use crate::{Direction, Notification, Request};
 
@@ -137,6 +138,8 @@ pub fn catalog() -> Vec<MethodInfo> {
         req::<task::TaskResolve>(),
         req::<task::TaskRun>(),
         req::<task::TaskCancel>(),
+        req::<terminal::TerminalOpen>(),
+        req::<process::Run>(),
         req::<process::Spawn>(),
         req::<process::SpawnPty>(),
         req::<process::ProcessWrite>(),
@@ -146,6 +149,7 @@ pub fn catalog() -> Vec<MethodInfo> {
         req::<lsp::ResolveLaunch>(),
         req::<lsp::LspMiddleware>(),
         req::<lsp::LspSendRequest>(),
+        req::<lsp::LspApplyEdit>(),
         req::<service::ServiceCall>(),
         req::<service::ServiceInvoke>(),
         notif::<base::CancelRequest>(),
@@ -173,6 +177,9 @@ pub fn core_events() -> Vec<EventInfo> {
         ev::<events::InterfaceAvailabilityChanged>(),
         ev::<events::DiagnosticsChanged>(),
         ev::<events::LanguageStatusChanged>(),
+        ev::<events::TerminalOpened>(),
+        ev::<events::TerminalClosed>(),
+        ev::<events::UiChanged>(),
     ]
 }
 
@@ -194,6 +201,7 @@ mod tests {
         "process",
         "lsp",
         "service",
+        "terminal",
         "$",
     ];
 

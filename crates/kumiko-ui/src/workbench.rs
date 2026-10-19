@@ -18,8 +18,8 @@ use kumiko_core::config::keymap::{KeyChord, KeySequence, Resolution};
 use kumiko_core::documents::{Encoding, LineEnding, Snapshot};
 use kumiko_core::events::{Delivery, EventFilter};
 use kumiko_core::plugin_host::PluginStatus;
-use kumiko_core::protocol::events::FsChanged;
 use kumiko_core::protocol::events::PluginState;
+use kumiko_core::protocol::events::{FsChanged, TerminalClosed, TerminalOpened};
 use kumiko_core::protocol::methods::fs::FileKind;
 use kumiko_core::resources::ResourceKind;
 use kumiko_core::service_api::FileSystem;
@@ -39,8 +39,14 @@ use crate::problems::{self, Group, Problem, Severity};
 use crate::quick_open::{self, Action, Item, Mode, QuickOpen};
 use crate::state::{self, GroupState, WorkspaceState};
 use crate::tabs::{Split, Tab, Tabs};
+use crate::terminal::TerminalProvider;
 
+mod kits;
 mod language;
+mod plugin_ui;
+mod search;
+mod tasks;
+mod terminal;
 use crate::tree::{Entry, FileTree, Row};
 
 #[cfg(windows)]
@@ -114,12 +120,37 @@ pub struct Workbench {
     /// Editors by group and file: each group keeps its own carets and scroll.
     editors: HashMap<(usize, Uri), EditorHandle>,
     provider: Rc<dyn EditorProvider>,
+    terminals: Rc<dyn TerminalProvider>,
+    /// Terminal sessions (tool window tabs), the shown one, how many were started, and a
+    /// request to focus the shown one.
+    sessions: Vec<terminal::Session>,
+    active_session: usize,
+    terminal_counter: usize,
+    focus_terminal: bool,
     /// The last message for the status bar (e.g. a failed command).
     message: Option<String>,
     /// Symbols of a file for `@` in Quick Open, usages for Alt+F7, the place a rename is
     /// for.
     symbols: Option<(Uri, Vec<kumiko_core::language::Symbol>)>,
     usages: Vec<Item>,
+    /// Find in Files: results so far, the search they belong to, an invalid pattern, options.
+    text_results: Vec<Item>,
+    text_generation: u64,
+    text_error: Option<String>,
+    text_options: search::TextOptions,
+    /// The question a plugin asked (waiting in the popup), its prompt and choices.
+    ask: Option<plugin_ui::Ask>,
+    ask_prompt: String,
+    ask_items: Vec<Item>,
+    /// Views of plugins, and the tree nodes the user toggled away from their default.
+    plugin_views: Vec<String>,
+    tree_toggles: std::collections::HashSet<String>,
+    /// File colours and badges plugins set (Git), by file.
+    decorations: HashMap<Uri, (Option<u32>, Option<String>)>,
+    /// Kits offered by Apply Kit, with what applying each would do.
+    kit_rows: Vec<(kumiko_core::kits::KitInfo, String)>,
+    /// Tasks offered by Run Task.
+    task_list: Vec<kumiko_core::tasks::Task>,
     language_target: Option<(Uri, kumiko_types::Position)>,
     a11y: Option<Bridge>,
     /// The open Quick Open popup and its focus.
@@ -148,6 +179,7 @@ impl Workbench {
         requests: UnboundedReceiver<UiCommand>,
         started: Instant,
         provider: Rc<dyn EditorProvider>,
+        terminals: Rc<dyn TerminalProvider>,
         cx: &mut Context<Self>,
     ) -> Self {
         let locale = core.locale();
@@ -185,9 +217,26 @@ impl Workbench {
             files: HashMap::new(),
             editors: HashMap::new(),
             provider,
+            terminals,
+            sessions: Vec::new(),
+            active_session: 0,
+            terminal_counter: 0,
+            focus_terminal: false,
             message: None,
             symbols: None,
             usages: Vec::new(),
+            task_list: Vec::new(),
+            decorations: HashMap::new(),
+            kit_rows: Vec::new(),
+            ask: None,
+            ask_prompt: String::new(),
+            ask_items: Vec::new(),
+            plugin_views: Vec::new(),
+            tree_toggles: std::collections::HashSet::new(),
+            text_results: Vec::new(),
+            text_generation: 0,
+            text_error: None,
+            text_options: search::TextOptions::default(),
             language_target: None,
             a11y: None,
             started: Some(started),
@@ -211,6 +260,8 @@ impl Workbench {
         workbench.watch_output(cx);
         workbench.refresh_roots(cx);
         workbench.refresh_problems();
+        workbench.refresh_plugin_views();
+        workbench.listen_to_plugins(cx);
         workbench.refresh_output();
         workbench.publish_context();
         workbench
@@ -249,7 +300,21 @@ impl Workbench {
 
     fn apply(&mut self, command: UiCommand, cx: &mut Context<Self>) {
         match command {
-            UiCommand::Toggle(window) => self.toggle_tool_window(window),
+            UiCommand::Toggle(window) => {
+                self.toggle_tool_window(window);
+                if window == ToolWindow::Terminal {
+                    self.ensure_terminal(cx);
+                }
+                if window == ToolWindow::Commit && self.layout.is_open(window) {
+                    self.refresh_commit(cx);
+                }
+            }
+            UiCommand::NewTerminal => {
+                if !self.layout.is_open(ToolWindow::Terminal) {
+                    self.layout.toggle(ToolWindow::Terminal);
+                }
+                self.new_terminal(cx);
+            }
             UiCommand::OpenFile(uri, position) => {
                 self.reveal = position.map(|p| (uri.clone(), p));
                 self.open_file(uri, cx)
@@ -261,6 +326,10 @@ impl Workbench {
             UiCommand::FindUsages => self.find_usages(cx),
             UiCommand::Rename => self.open_rename(cx),
             UiCommand::Reformat => self.reformat(cx),
+            UiCommand::RunTask => self.open_tasks(cx),
+            UiCommand::ApplyKit => self.open_kits(),
+            UiCommand::FindInFiles => self.open_find_in_files(cx),
+            UiCommand::StopTasks => self.stop_tasks(),
             UiCommand::SelectTheme => {
                 self.open_menu = None;
                 self.quick_open = Some(QuickOpen::picker(Mode::Themes));
@@ -399,6 +468,9 @@ impl Workbench {
             "document.saved",
             "language.diagnosticsChanged",
             "language.statusChanged",
+            "terminal.opened",
+            "terminal.closed",
+            "ui.changed",
         ];
         let mut events = core.events().subscribe(EventFilter::topics(topics));
         cx.spawn(async move |this, cx| {
@@ -431,6 +503,15 @@ impl Workbench {
         };
         if event.topic.starts_with("document.") {
             self.refresh_dirty(cx);
+        } else if let Some(Ok(opened)) = event.decode::<TerminalOpened>() {
+            self.terminal_opened(opened.terminal, opened.title);
+            cx.notify();
+        } else if let Some(Ok(closed)) = event.decode::<TerminalClosed>() {
+            self.terminal_closed(closed.terminal);
+            cx.notify();
+        } else if event.topic == "ui.changed" {
+            self.refresh_decorations();
+            cx.notify();
         } else if event.topic == "language.statusChanged" {
             cx.notify();
         } else if event.topic == "language.diagnosticsChanged" {
@@ -439,6 +520,9 @@ impl Workbench {
         } else if event.topic.starts_with("config.") || event.topic.starts_with("plugin.") {
             if event.topic.starts_with("config.") {
                 self.reload_settings(cx);
+            }
+            if event.topic.starts_with("plugin.") {
+                self.refresh_plugin_views();
             }
             self.refresh_problems();
             cx.notify();
@@ -768,6 +852,9 @@ impl Workbench {
 
     fn close_quick(&mut self) {
         self.quick_open = None;
+        if let Some(ask) = self.ask.take() {
+            ask.cancel();
+        }
         self.focus_request = Some(if self.split.tabs().len() > 0 {
             FocusTarget::Editor
         } else {
@@ -795,6 +882,11 @@ impl Workbench {
             Mode::Themes => self.theme_items(&query),
             Mode::Usages => self.usage_items(&query),
             Mode::Rename => self.rename_items(&query),
+            Mode::Tasks => self.task_items(&query),
+            Mode::FindInFiles => self.text_items(&query),
+            Mode::Ask => self.ask_items(&query),
+            Mode::Kits => self.kit_items(&query),
+            Mode::Pick => self.pick_items(&query),
         };
         let items = if items.is_empty() {
             vec![self.note("quickOpen.noResults")]
@@ -803,6 +895,15 @@ impl Workbench {
         };
         if let Some(quick) = &mut self.quick_open {
             quick.set_items(items);
+        }
+    }
+
+    /// Like [`Self::refresh_quick`] for results that grow: the selection stays put.
+    fn refresh_quick_keeping_selection(&mut self) {
+        let selected = self.quick_open.as_ref().map_or(0, |q| q.selected);
+        self.refresh_quick();
+        if let Some(quick) = &mut self.quick_open {
+            quick.selected = selected.min(quick.items.len().saturating_sub(1));
         }
     }
 
@@ -1030,7 +1131,12 @@ impl Workbench {
             .as_ref()
             .map(|q| q.query().to_owned())
             .unwrap_or_default();
+        // Closing the popup cancels a plugin's question; an answer keeps it.
+        let keep = matches!(action, Action::Answer(_))
+            .then(|| self.ask.take())
+            .flatten();
         self.close_quick();
+        self.ask = keep.or(self.ask.take());
         match action {
             Action::OpenFile(uri) => {
                 self.execute_id("workbench.openFile", vec![Value::from(uri.as_str())], cx)
@@ -1048,6 +1154,9 @@ impl Workbench {
                 self.execute_id("workbench.openFile", args, cx)
             }
             Action::Rename => self.rename(query, cx),
+            Action::Answer(choice) => self.answer(choice, query),
+            Action::RunTask(index) => self.run_task(index, cx),
+            Action::ApplyKit(index) => self.apply_kit(index, cx),
             Action::GotoLine(line) => {
                 if let Some(editor) = self.active_editor() {
                     (editor.goto_line)(line, cx);
@@ -1125,6 +1234,17 @@ impl Workbench {
             _ => {
                 // Text is what the key types; shortcuts go on to the keymap.
                 let shortcut = modifiers.control || modifiers.platform || modifiers.alt;
+                if modifiers.alt
+                    && quick.mode() == Mode::FindInFiles
+                    && self.toggle_text_option(stroke.key.as_str(), cx)
+                {
+                    cx.stop_propagation();
+                    cx.notify();
+                    return;
+                }
+                let Some(quick) = &mut self.quick_open else {
+                    return;
+                };
                 match stroke.key_char.as_deref() {
                     Some(text) if !shortcut => {
                         quick.input.insert(text);
@@ -1138,6 +1258,7 @@ impl Workbench {
         if edited {
             self.refresh_quick();
             self.ensure_symbols(cx);
+            self.start_text_search(cx);
         }
         cx.notify();
     }
@@ -1637,6 +1758,7 @@ fn place(rect: Rect) -> gpui::Div {
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_editors(window, cx);
+        self.ensure_terminal_views(window, cx);
         self.apply_reveal(cx);
         if self.shown
             && let Some(started) = self.started.take()
@@ -1813,6 +1935,11 @@ impl Workbench {
                     .flex()
                     .gap_4()
                     // Language servers at work, as IntelliJ shows background tasks.
+                    .children(
+                        self.plugin_status()
+                            .into_iter()
+                            .map(|text| div().text_color(rgba(p_muted)).child(text)),
+                    )
                     .children(self.core.language().progress().into_iter().last().map(|p| {
                         let mut text = format!("{}: {}", p.server, p.title);
                         if let Some(message) = p.message {
@@ -2100,6 +2227,11 @@ impl Workbench {
             .when(quick.input.text().is_empty(), |d| {
                 let placeholder = match quick.mode() {
                     Mode::Usages => "usages.placeholder",
+                    Mode::Tasks => "tasks.placeholder",
+                    Mode::FindInFiles => "findInFiles.prompt",
+                    Mode::Ask => "ask.prompt",
+                    Mode::Kits => "kits.placeholder",
+                    Mode::Pick => "ask.pick",
                     Mode::Rename => "rename.prompt",
                     Mode::Themes => "quickOpen.themes",
                     _ => "quickOpen.placeholder",
@@ -2111,6 +2243,15 @@ impl Workbench {
                         .child(self.t(placeholder)),
                 )
             });
+        // Find in Files shows its options at the right: Aa W .* (Alt+C/W/X).
+        let input = input.when(quick.mode() == Mode::FindInFiles, |d| {
+            d.child(
+                div()
+                    .ml_auto()
+                    .text_color(rgba(p.muted))
+                    .child(self.text_options_label()),
+            )
+        });
         let first = quick.selected.saturating_sub(QUICK_ROWS - 1);
         let rows = quick
             .items
@@ -2271,6 +2412,8 @@ impl Workbench {
             ToolWindow::Project => self.project_tree(cx),
             ToolWindow::Problems => self.problems_view(cx),
             ToolWindow::Output => self.output_view(cx),
+            ToolWindow::Terminal => self.terminal_view(cx),
+            ToolWindow::Commit => self.commit_view(cx),
         };
         let panel = place(rect)
             .bg(rgba(p.panel))
@@ -2350,7 +2493,23 @@ impl Workbench {
                                     },
                                 ))
                                 .child(div().w(px(10.0)).text_color(rgba(p.muted)).child(arrow))
-                                .child(row.name),
+                                .child(match this.decorations.get(&row.uri) {
+                                    Some((color, _)) => div()
+                                        .text_color(rgba(color.unwrap_or(p.foreground)))
+                                        .child(row.name.clone()),
+                                    None => div().child(row.name.clone()),
+                                })
+                                .children(
+                                    this.decorations
+                                        .get(&row.uri)
+                                        .and_then(|(_, badge)| badge.clone())
+                                        .map(|badge| {
+                                            div()
+                                                .text_color(rgba(p.muted))
+                                                .text_size(px(10.0))
+                                                .child(badge)
+                                        }),
+                                ),
                         )
                     })
                     .collect::<Vec<_>>()

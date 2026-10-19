@@ -759,6 +759,26 @@ impl LanguageService {
         server.client.request_value(method, &params).await
     }
 
+    /// Applies an LSP workspace edit of a server the plugin contributes (`lsp/applyEdit`).
+    pub async fn apply_server_edit(
+        &self,
+        plugin: &str,
+        server_id: &str,
+        edit: Value,
+    ) -> Result<bool, String> {
+        let encoding = lock(&self.shared.state)
+            .servers
+            .values()
+            .filter(|s| s.key.id == server_id && s.decl.plugin == plugin)
+            .find_map(|s| s.running())
+            .map(|r| r.encoding)
+            .ok_or_else(|| format!("{server_id} is not a running server of {plugin}"))?;
+        let edit: lsp_types::WorkspaceEdit =
+            serde_json::from_value(edit).map_err(|e| e.to_string())?;
+        let edit = self.shared.workspace_edit(encoding, &edit).await;
+        Ok(self.shared.host.apply_edit(edit).await)
+    }
+
     /// Stops every server politely (`shutdown`, `exit`), killing what does not stop in time.
     pub async fn shutdown(&self) {
         let servers: Vec<Arc<Server>> = {

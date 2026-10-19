@@ -16,6 +16,7 @@ kumiko-types.workspace = true
 kumiko-service-api.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "process", "macros"] }
 tracing.workspace = true
+portable-pty.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["process"] }

@@ -17,8 +17,10 @@ use kumiko_plugin_host::{
 use kumiko_project::ProjectService;
 use kumiko_protocol::common::CommandCall;
 use kumiko_protocol::events::{InterfaceAvailabilityChanged, PluginState, PluginStateChanged};
-use kumiko_protocol::methods::lifecycle::WorkspaceInfo;
-use kumiko_protocol::methods::lsp::LspMessageParams;
+use kumiko_protocol::methods::lifecycle::{PluginStorage, WorkspaceInfo};
+use kumiko_protocol::methods::lsp::{LspApplyEditParams, LspMessageParams};
+use kumiko_protocol::methods::process::{RunParams, RunResult};
+use kumiko_protocol::methods::terminal::{TerminalOpenParams, TerminalOpenResult};
 use kumiko_protocol::{ErrorCode, ResponseError};
 use kumiko_service_api::wasm::WasmRuntime;
 use kumiko_service_api::when::WhenExpr;
@@ -34,6 +36,8 @@ pub(crate) struct Services {
     pub locale: Option<String>,
     /// The Language service, set once the core is assembled (plugins exist before it).
     pub language: Arc<std::sync::OnceLock<kumiko_lsp::LanguageService>>,
+    /// The core itself, set once it is assembled (terminals).
+    pub core: Arc<std::sync::OnceLock<std::sync::Weak<crate::Inner>>>,
 }
 
 /// Installed plugins and everything the core registered for them.
@@ -61,6 +65,8 @@ impl PluginManager {
             project: services.project.clone(),
             locale: services.locale.clone(),
             language: services.language.clone(),
+            core: services.core.clone(),
+            dirs: dirs.clone(),
         });
         let host = PluginHost::new(
             registry.clone(),
@@ -333,9 +339,122 @@ struct CoreHostApi {
     project: Arc<ProjectService>,
     locale: Option<String>,
     language: Arc<std::sync::OnceLock<kumiko_lsp::LanguageService>>,
+    core: Arc<std::sync::OnceLock<std::sync::Weak<crate::Inner>>>,
+    dirs: KumikoDirs,
 }
 
 impl HostApi for CoreHostApi {
+    fn ui_call(
+        &self,
+        caller: &PluginId,
+        method: &str,
+        params: Value,
+    ) -> BoxFuture<'static, Result<Value, ResponseError>> {
+        let core = self
+            .core
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .map(|inner| crate::CoreApi { inner });
+        let (caller, method) = (caller.clone(), method.to_owned());
+        Box::pin(async move {
+            let core = core.ok_or_else(|| {
+                ResponseError::new(ErrorCode::InternalError, "the core is starting")
+            })?;
+            core.ui_call(caller, &method, params).await
+        })
+    }
+
+    fn run_process(
+        &self,
+        caller: &PluginId,
+        params: RunParams,
+    ) -> BoxFuture<'static, Result<RunResult, ResponseError>> {
+        let core = self
+            .core
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .map(|inner| crate::CoreApi { inner });
+        let owner = caller.to_string();
+        Box::pin(async move {
+            let core = core.ok_or_else(|| {
+                ResponseError::new(ErrorCode::InternalError, "the core is starting")
+            })?;
+            let spec = kumiko_service_api::ProcessSpec {
+                command: params.spec.command,
+                args: params.spec.args,
+                cwd: params.spec.cwd.map(std::path::PathBuf::from),
+                env: params.spec.env,
+                owner,
+            };
+            let ran = core
+                .run_process(spec, params.input)
+                .await
+                .map_err(|e| ResponseError::new(ErrorCode::NotFound, e))?;
+            Ok(RunResult {
+                exit_code: ran.exit_code,
+                stdout: ran.stdout,
+                stderr: ran.stderr,
+            })
+        })
+    }
+
+    fn open_terminal(
+        &self,
+        caller: &PluginId,
+        params: TerminalOpenParams,
+    ) -> BoxFuture<'static, Result<TerminalOpenResult, ResponseError>> {
+        let core = self
+            .core
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .map(|inner| crate::CoreApi { inner });
+        let owner = caller.to_string();
+        Box::pin(async move {
+            let core = core.ok_or_else(|| {
+                ResponseError::new(ErrorCode::InternalError, "the core is starting")
+            })?;
+            let spec = params.spec;
+            let size = spec.pty.map_or(
+                kumiko_service_api::PtySize {
+                    cols: 120,
+                    rows: 30,
+                },
+                |s| kumiko_service_api::PtySize {
+                    cols: s.cols,
+                    rows: s.rows,
+                },
+            );
+            let spec = kumiko_service_api::ProcessSpec {
+                command: spec.command,
+                args: spec.args,
+                cwd: spec.cwd.map(std::path::PathBuf::from),
+                env: spec.env,
+                owner,
+            };
+            core.open_terminal(&params.title, spec, size)
+                .map(|terminal| TerminalOpenResult { terminal })
+                .map_err(|e| ResponseError::new(ErrorCode::InternalError, e))
+        })
+    }
+
+    fn lsp_apply_edit(
+        &self,
+        caller: &PluginId,
+        params: LspApplyEditParams,
+    ) -> BoxFuture<'static, Result<bool, ResponseError>> {
+        let language = self.language.get().cloned();
+        let caller = caller.to_string();
+        Box::pin(async move {
+            let language = language.ok_or_else(|| {
+                ResponseError::new(ErrorCode::InternalError, "the core is starting")
+            })?;
+            language
+                .apply_server_edit(&caller, &params.server_id, params.edit)
+                .await
+                .map_err(|e| ResponseError::new(ErrorCode::InvalidParams, e))
+        })
+    }
+
     fn lsp_send_request(
         &self,
         caller: &PluginId,
@@ -401,6 +520,20 @@ impl HostApi for CoreHostApi {
             },
             config: Value::Object(self.config.section(plugin.namespace(), None)),
             locale: crate::effective_locale(self.locale.as_deref(), &self.config),
+            storage: {
+                let id = plugin.id().as_str();
+                let data = self.dirs.data_dir().join("plugin-data").join(id);
+                let cache = self.dirs.cache_dir().join("plugins").join(id);
+                for dir in [&data, &cache] {
+                    if let Err(error) = std::fs::create_dir_all(dir) {
+                        tracing::warn!(plugin = %id, "cannot create {}: {error}", dir.display());
+                    }
+                }
+                Some(PluginStorage {
+                    data: data.to_string_lossy().into_owned(),
+                    cache: cache.to_string_lossy().into_owned(),
+                })
+            },
         }
     }
 

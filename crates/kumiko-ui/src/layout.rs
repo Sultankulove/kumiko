@@ -27,6 +27,9 @@ pub enum ToolWindow {
     Project,
     Problems,
     Output,
+    Terminal,
+    /// The Commit tool window: views plugins declare (Git changes).
+    Commit,
 }
 
 /// Which edge a tool window belongs to.
@@ -37,16 +40,18 @@ pub enum Side {
 }
 
 impl ToolWindow {
-    pub const ALL: [ToolWindow; 3] = [
+    pub const ALL: [ToolWindow; 5] = [
         ToolWindow::Project,
+        ToolWindow::Commit,
         ToolWindow::Problems,
         ToolWindow::Output,
+        ToolWindow::Terminal,
     ];
 
     pub fn side(self) -> Side {
         match self {
-            ToolWindow::Project => Side::Left,
-            ToolWindow::Problems | ToolWindow::Output => Side::Bottom,
+            ToolWindow::Project | ToolWindow::Commit => Side::Left,
+            ToolWindow::Problems | ToolWindow::Output | ToolWindow::Terminal => Side::Bottom,
         }
     }
 
@@ -56,6 +61,8 @@ impl ToolWindow {
             ToolWindow::Project => "toolWindow.project",
             ToolWindow::Problems => "toolWindow.problems",
             ToolWindow::Output => "toolWindow.output",
+            ToolWindow::Terminal => "toolWindow.terminal",
+            ToolWindow::Commit => "toolWindow.commit",
         }
     }
 
@@ -65,6 +72,8 @@ impl ToolWindow {
             ToolWindow::Project => "workbench.toggleProject",
             ToolWindow::Problems => "workbench.toggleProblems",
             ToolWindow::Output => "workbench.toggleOutput",
+            ToolWindow::Terminal => "workbench.toggleTerminal",
+            ToolWindow::Commit => "workbench.toggleCommit",
         }
     }
 }

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "terminal.shell": {
+      "type": "string",
+      "default": "",
+      "description": "Program a session starts. Empty: $SHELL (or /bin/bash), PowerShell on Windows."
+    },
+    "terminal.args": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Arguments of the shell."
+    }
+  }
+}

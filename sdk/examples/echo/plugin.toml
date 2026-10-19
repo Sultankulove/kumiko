@@ -3,7 +3,7 @@
 id = "kumiko.echo"
 name = "Echo"
 version = "0.1.0"
-api = "^0.1"
+api = "^1.0"
 kind = "process"
 entry = "bin/kumiko-echo"
 activation = ["onCommand:echo.*"]
@@ -55,3 +55,12 @@ launch = "dynamic"
 [[contributes.commands]]
 id = "echo.lsp"
 title = "Echo: send a request to the language server"
+
+[[contributes.taskProviders]]
+type = "echo"
+
+# The consumer fixture of the Git plugin's interface (E12).
+[[consumes]]
+interface = "kumiko.git.repository"
+version = "^1"
+optional = true

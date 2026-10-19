@@ -32,12 +32,17 @@ use kumiko_protocol::methods::lifecycle::{
     Exit, HostCapabilities, Initialize, InitializeParams, Initialized, Shutdown, WorkspaceInfo,
 };
 use kumiko_protocol::methods::lsp::{
-    LaunchSpec, LspMessageParams, LspMiddleware, LspSendRequest, MiddlewareResult, ResolveLaunch,
-    ResolveLaunchParams,
+    LaunchSpec, LspApplyEdit, LspApplyEditParams, LspMessageParams, LspMiddleware, LspSendRequest,
+    MiddlewareResult, ResolveLaunch, ResolveLaunchParams,
 };
+use kumiko_protocol::methods::process::{Run, RunParams, RunResult};
 use kumiko_protocol::methods::service::{
     ServiceCall, ServiceCallParams, ServiceInvoke, ServiceInvokeParams,
 };
+use kumiko_protocol::methods::task::{
+    TaskDefinition, TaskList, TaskParams, TaskProvide, TaskProvideParams, TaskResolve,
+};
+use kumiko_protocol::methods::terminal::{TerminalOpen, TerminalOpenParams, TerminalOpenResult};
 use kumiko_protocol::{ErrorCode, Notification, Request, ResponseError};
 use kumiko_service_api::wasm::{
     WasmCallError, WasmHost, WasmInstance, WasmInstanceSpec, WasmRuntime,
@@ -69,6 +74,35 @@ pub trait HostApi: Send + Sync + 'static {
     /// The user's choice among several providers (`interfaces.<id>.provider`).
     fn preferred_provider(&self, interface: &InterfaceId) -> Option<PluginId>;
 
+    /// `ui/*`: declarative UI and questions to the user.
+    fn ui_call(
+        &self,
+        caller: &PluginId,
+        method: &str,
+        params: Value,
+    ) -> BoxFuture<'static, Result<Value, ResponseError>>;
+
+    /// `process/run`: a process run to its end.
+    fn run_process(
+        &self,
+        caller: &PluginId,
+        params: RunParams,
+    ) -> BoxFuture<'static, Result<RunResult, ResponseError>>;
+
+    /// `terminal/open`: a terminal session in the IDE.
+    fn open_terminal(
+        &self,
+        caller: &PluginId,
+        params: TerminalOpenParams,
+    ) -> BoxFuture<'static, Result<TerminalOpenResult, ResponseError>>;
+
+    /// `lsp/applyEdit`: a workspace edit of a server the plugin contributes.
+    fn lsp_apply_edit(
+        &self,
+        caller: &PluginId,
+        params: LspApplyEditParams,
+    ) -> BoxFuture<'static, Result<bool, ResponseError>>;
+
     /// `lsp/sendRequest`: a request to a language server the plugin contributes.
     fn lsp_send_request(
         &self,
@@ -84,6 +118,7 @@ pub struct Session {
     /// Current values of the plugin's own settings.
     pub config: Value,
     pub locale: String,
+    pub storage: Option<kumiko_protocol::methods::lifecycle::PluginStorage>,
 }
 
 #[derive(Debug, Clone)]
@@ -511,6 +546,32 @@ impl PluginHost {
         connection.request::<ResolveLaunch>(&params).await
     }
 
+    /// The plugin's tasks of a provider type (`task/provide`), starting the plugin if needed.
+    pub async fn task_provide(
+        &self,
+        plugin: &PluginId,
+        task_type: &str,
+    ) -> Result<TaskList, ResponseError> {
+        let connection = self.ensure_running(plugin).await?;
+        connection
+            .request::<TaskProvide>(&TaskProvideParams {
+                task_type: task_type.to_owned(),
+            })
+            .await
+    }
+
+    /// Fills in what a task runs (`task/resolve`).
+    pub async fn task_resolve(
+        &self,
+        plugin: &PluginId,
+        task: TaskDefinition,
+    ) -> Result<TaskDefinition, ResponseError> {
+        let connection = self.ensure_running(plugin).await?;
+        connection
+            .request::<TaskResolve>(&TaskParams { task })
+            .await
+    }
+
     /// LSP methods the running plugin intercepts; empty when it does not run.
     pub fn lsp_middleware(&self, plugin: &PluginId) -> Vec<String> {
         self.slot(plugin)
@@ -658,11 +719,22 @@ impl PluginHost {
                     SetContext::METHOD.into(),
                     ServiceCall::METHOD.into(),
                     LspSendRequest::METHOD.into(),
+                    LspApplyEdit::METHOD.into(),
+                    TerminalOpen::METHOD.into(),
+                    Run::METHOD.into(),
+                    "ui/tree/setModel".into(),
+                    "ui/tree/update".into(),
+                    "ui/fileDecorations".into(),
+                    "ui/setStatusItem".into(),
+                    "ui/showInput".into(),
+                    "ui/showQuickPick".into(),
+                    "ui/showMessage".into(),
                 ],
                 experimental: None,
             },
             workspace: session.workspace,
             config: session.config,
+            storage: session.storage,
             locale: session.locale,
         };
         let conn = &running.conn;
@@ -1005,7 +1077,7 @@ fn required_permission(method: &str) -> Option<Permission> {
     }
     match method.split('/').next() {
         Some("fs" | "document") => Some(Permission::FsWorkspace),
-        Some("process") => Some(Permission::ProcessSpawn),
+        Some("process" | "terminal") => Some(Permission::ProcessSpawn),
         Some("ui") => Some(Permission::Ui),
         _ => None,
     }
@@ -1074,6 +1146,28 @@ impl Bridge {
                         result(())
                     }),
             ),
+            ui if ui.starts_with("ui/") => self.api.ui_call(&plugin, ui, request),
+            Run::METHOD => match params(method, request) {
+                Ok(call) => {
+                    let ran = self.api.run_process(&plugin, call);
+                    Box::pin(async move { ran.await.and_then(result) })
+                }
+                Err(error) => ready(Err(error)),
+            },
+            TerminalOpen::METHOD => match params(method, request) {
+                Ok(call) => {
+                    let opened = self.api.open_terminal(&plugin, call);
+                    Box::pin(async move { opened.await.and_then(result) })
+                }
+                Err(error) => ready(Err(error)),
+            },
+            LspApplyEdit::METHOD => match params(method, request) {
+                Ok(call) => {
+                    let applied = self.api.lsp_apply_edit(&plugin, call);
+                    Box::pin(async move { applied.await.and_then(result) })
+                }
+                Err(error) => ready(Err(error)),
+            },
             LspSendRequest::METHOD => match params(method, request) {
                 Ok(call) => self.api.lsp_send_request(&plugin, call),
                 Err(error) => ready(Err(error)),

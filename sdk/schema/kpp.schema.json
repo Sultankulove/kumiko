@@ -670,6 +670,18 @@
           "$ref": "#/$defs/PluginId",
           "description": "Id of the plugin being initialized, as in its manifest."
         },
+        "storage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PluginStorage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Directories of the plugin's own, created by the host."
+        },
         "workspace": {
           "$ref": "#/$defs/WorkspaceInfo"
         }
@@ -783,6 +795,21 @@
       "required": [
         "level",
         "message"
+      ],
+      "type": "object"
+    },
+    "LspApplyEditParams": {
+      "properties": {
+        "edit": {
+          "description": "An LSP `WorkspaceEdit`, positions in the server's encoding."
+        },
+        "serverId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "serverId",
+        "edit"
       ],
       "type": "object"
     },
@@ -937,6 +964,22 @@
       "required": [
         "plugin",
         "state"
+      ],
+      "type": "object"
+    },
+    "PluginStorage": {
+      "description": "Where a plugin keeps files: `data` survives updates of the plugin, `cache` may be deleted.",
+      "properties": {
+        "cache": {
+          "type": "string"
+        },
+        "data": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "cache"
       ],
       "type": "object"
     },
@@ -1391,6 +1434,49 @@
       },
       "required": [
         "topics"
+      ],
+      "type": "object"
+    },
+    "RunParams": {
+      "properties": {
+        "input": {
+          "default": null,
+          "description": "Written to the process input, which is then closed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spec": {
+          "$ref": "#/$defs/ProcessSpec"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "type": "object"
+    },
+    "RunResult": {
+      "properties": {
+        "exitCode": {
+          "description": "`null` when killed by a signal.",
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "stdout": {
+          "description": "Output as UTF-8 (invalid bytes replaced), each cut at 8 MiB.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stdout",
+        "stderr"
       ],
       "type": "object"
     },
@@ -1861,6 +1947,73 @@
       ],
       "type": "object"
     },
+    "TerminalClosed": {
+      "properties": {
+        "exitCode": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "terminal": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "terminal"
+      ],
+      "type": "object"
+    },
+    "TerminalOpenParams": {
+      "properties": {
+        "spec": {
+          "$ref": "#/$defs/ProcessSpec",
+          "description": "What to run; an empty command is the platform's shell, no cwd the first folder."
+        },
+        "title": {
+          "description": "Title of the session's tab.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "spec"
+      ],
+      "type": "object"
+    },
+    "TerminalOpenResult": {
+      "properties": {
+        "terminal": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "terminal"
+      ],
+      "type": "object"
+    },
+    "TerminalOpened": {
+      "properties": {
+        "terminal": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "terminal",
+        "title"
+      ],
+      "type": "object"
+    },
     "TextEdit": {
       "description": "Replacement of `range` with `new_text`; an empty range inserts, empty text deletes.",
       "properties": {
@@ -2017,6 +2170,25 @@
       },
       "required": [
         "viewId"
+      ],
+      "type": "object"
+    },
+    "UiChanged": {
+      "properties": {
+        "view": {
+          "description": "The view of a `tree` change.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "what": {
+          "description": "`tree`, `decorations` or `status`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "what"
       ],
       "type": "object"
     },
@@ -2195,6 +2367,27 @@
       "description": "A task execution started.",
       "payload": {
         "$ref": "#/$defs/TaskStarted"
+      }
+    },
+    "terminal.closed": {
+      "class": "state",
+      "description": "A terminal's shell ended.",
+      "payload": {
+        "$ref": "#/$defs/TerminalClosed"
+      }
+    },
+    "terminal.opened": {
+      "class": "state",
+      "description": "A terminal started; the UI shows it.",
+      "payload": {
+        "$ref": "#/$defs/TerminalOpened"
+      }
+    },
+    "ui.changed": {
+      "class": "state",
+      "description": "A plugin changed its declarative UI (a view's tree, file decorations, status items).",
+      "payload": {
+        "$ref": "#/$defs/UiChanged"
       }
     },
     "workspace.folderAdded": {
@@ -2532,6 +2725,17 @@
         "type": "null"
       }
     },
+    "lsp/applyEdit": {
+      "description": "Apply a workspace edit of a language server, e.g. for a client-side command.",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/LspApplyEditParams"
+      },
+      "result": {
+        "type": "boolean"
+      }
+    },
     "lsp/middleware/request": {
       "description": "Intercept a message the plugin declared in `lspMiddleware`.",
       "direction": "hostToPlugin",
@@ -2591,6 +2795,17 @@
       },
       "result": {
         "type": "null"
+      }
+    },
+    "process/run": {
+      "description": "Run a process to its end and return its output (for short commands, e.g. a status query).",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/RunParams"
+      },
+      "result": {
+        "$ref": "#/$defs/RunResult"
       }
     },
     "process/spawn": {
@@ -2719,6 +2934,17 @@
       },
       "result": {
         "$ref": "#/$defs/TaskExecution"
+      }
+    },
+    "terminal/open": {
+      "description": "Open a terminal session in the IDE (permission `process.spawn`).",
+      "direction": "pluginToHost",
+      "kind": "request",
+      "params": {
+        "$ref": "#/$defs/TerminalOpenParams"
+      },
+      "result": {
+        "$ref": "#/$defs/TerminalOpenResult"
       }
     },
     "ui/fileDecorations": {
@@ -2864,5 +3090,5 @@
     }
   },
   "title": "Kumiko Plugin Protocol",
-  "version": "0.1.0"
+  "version": "1.0.0"
 }

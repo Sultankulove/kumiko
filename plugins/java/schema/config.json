@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "java.jdtls.path": {
+      "type": "string",
+      "default": "",
+      "description": "Folder of an Eclipse JDT Language Server (with plugins/ and config_*/). Empty: the one downloaded into the cache."
+    },
+    "java.home": {
+      "type": "string",
+      "default": "",
+      "description": "JDK that runs JDT LS (21 or newer). Empty: the newest detected one."
+    },
+    "java.jdks": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "More JDK folders to offer to projects, besides the detected ones."
+    },
+    "java.jdk": {
+      "type": "string",
+      "default": "",
+      "description": "JDK of the project (a folder); empty: the newest one."
+    }
+  }
+}

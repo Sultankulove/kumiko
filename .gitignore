@@ -1,3 +1,6 @@
 /target/
 **/*.rs.bk
 /spikes/ui/target/
+
+# IDE project files of whoever opens the repository
+/.idea/

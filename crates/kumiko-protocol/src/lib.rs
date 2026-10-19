@@ -27,7 +27,7 @@ pub use jsonrpc::{
 };
 
 /// Protocol version. Stays 0.x until the MVP freeze, where it becomes 1.0.0 (spec, section 16).
-pub const PROTOCOL_VERSION: &str = "0.1.0";
+pub const PROTOCOL_VERSION: &str = "1.0.0";
 
 /// Who sends a message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

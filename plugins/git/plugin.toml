@@ -1,0 +1,68 @@
+# kumiko.git (spec, section 19): the system `git`, shown through declarative UI.
+# Build: cargo build -p kumiko-git --release --target wasm32-wasip2 → plugin.wasm.
+[plugin]
+id = "kumiko.git"
+name = "Git"
+version = "0.1.0"
+api = "^1.0"
+kind = "wasm"
+entry = "plugin.wasm"
+permissions = ["process.spawn", "ui"]
+activation = ["workspaceContains:.git", "onCommand:git.*", "onInterface:kumiko.git.repository"]
+
+[[provides]]
+interface = "kumiko.git.repository"
+version = "1.0.0"
+
+[[contributes.views]]
+id = "git.changes"
+title = "Commit"
+refreshCommand = "git.refresh"
+
+[[contributes.commands]]
+id = "git.status"
+title = "Git: Status"
+
+[[contributes.commands]]
+id = "git.refresh"
+title = "Git: Refresh"
+
+[[contributes.commands]]
+id = "git.add"
+title = "Git: Add"
+
+[[contributes.commands]]
+id = "git.commit"
+title = "Git: Commit…"
+
+[[contributes.commands]]
+id = "git.checkout"
+title = "Git: Checkout Branch…"
+
+[[contributes.commands]]
+id = "git.createBranch"
+title = "Git: New Branch…"
+
+[[contributes.commands]]
+id = "git.pull"
+title = "Git: Pull"
+
+[[contributes.commands]]
+id = "git.push"
+title = "Git: Push"
+
+[[contributes.commands]]
+id = "git.diff"
+title = "Git: Diff"
+
+[[contributes.keybindings]]
+key = "ctrl+k"
+command = "git.commit"
+
+[[contributes.keybindings]]
+key = "ctrl+shift+k"
+command = "git.push"
+
+[[contributes.keybindings]]
+key = "ctrl+t"
+command = "git.pull"

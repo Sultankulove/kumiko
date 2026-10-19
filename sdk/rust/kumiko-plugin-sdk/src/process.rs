@@ -33,10 +33,11 @@ use kumiko_protocol::methods::lifecycle::{
     Exit, Initialize, InitializeParams, InitializeResult, Initialized, PluginCapabilities, Shutdown,
 };
 use kumiko_protocol::methods::lsp::{
-    LaunchSpec, LspMessageParams, LspMiddleware, LspSendRequest, MiddlewareResult, ResolveLaunch,
-    ResolveLaunchParams,
+    LaunchSpec, LspApplyEdit, LspApplyEditParams, LspMessageParams, LspMiddleware, LspSendRequest,
+    MiddlewareResult, ResolveLaunch, ResolveLaunchParams,
 };
 use kumiko_protocol::methods::service::{ServiceCall, ServiceCallParams, ServiceInvoke};
+use kumiko_protocol::methods::task::{TaskList, TaskProvide, TaskProvideParams};
 use kumiko_protocol::{ErrorCode, ResponseError};
 use kumiko_types::{CommandId, InterfaceId, PluginId};
 
@@ -49,6 +50,8 @@ type LaunchFn = Arc<dyn Fn(Context, ResolveLaunchParams) -> LaunchFuture + Send 
 type MiddlewareFuture =
     Pin<Box<dyn Future<Output = Result<MiddlewareResult, ResponseError>> + Send>>;
 type MiddlewareFn = Arc<dyn Fn(Context, LspMessageParams) -> MiddlewareFuture + Send + Sync>;
+type TaskFuture = Pin<Box<dyn Future<Output = Result<TaskList, ResponseError>> + Send>>;
+type TaskFn = Arc<dyn Fn(Context) -> TaskFuture + Send + Sync>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SdkError {
@@ -115,6 +118,21 @@ impl Context {
             .await
     }
 
+    /// Applies an LSP workspace edit of one of its language servers (`lsp/applyEdit`), e.g. for a
+    /// client-side command; `true` when every change was applied.
+    pub async fn lsp_apply_edit(
+        &self,
+        server_id: impl Into<String>,
+        edit: Value,
+    ) -> Result<bool, RpcError> {
+        self.peer
+            .request::<LspApplyEdit>(&LspApplyEditParams {
+                server_id: server_id.into(),
+                edit,
+            })
+            .await
+    }
+
     /// A request to a language server this plugin contributes (`lsp/sendRequest`), positions in
     /// the server's encoding.
     pub async fn lsp_request(
@@ -140,6 +158,7 @@ pub struct Plugin {
     interfaces: Interfaces,
     launchers: HashMap<String, LaunchFn>,
     middleware: HashMap<String, MiddlewareFn>,
+    task_providers: HashMap<String, TaskFn>,
     capabilities: PluginCapabilities,
 }
 
@@ -196,6 +215,18 @@ impl Plugin {
         self
     }
 
+    /// Lists the tasks of a type declared in `[[contributes.taskProviders]]` (`task/provide`).
+    /// Each task carries what to run; the core runs it through the Process service.
+    pub fn task_provider<F, Fut>(mut self, task_type: &str, handler: F) -> Self
+    where
+        F: Fn(Context) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<TaskList, ResponseError>> + Send + 'static,
+    {
+        let handler: TaskFn = Arc::new(move |ctx| Box::pin(handler(ctx)));
+        self.task_providers.insert(task_type.to_owned(), handler);
+        self
+    }
+
     /// Intercepts an LSP method of its servers: server requests and notifications, and
     /// `workspace/executeCommand` the editor sends (client-side commands). The handler answers
     /// itself (`Respond`) or lets the core go on (`Forward`).
@@ -234,6 +265,7 @@ impl Plugin {
         let interfaces = Arc::new(self.interfaces);
         let launchers = Arc::new(self.launchers);
         let middleware = Arc::new(self.middleware);
+        let task_providers = Arc::new(self.task_providers);
         let mut capabilities = self.capabilities;
         for method in middleware.keys() {
             if !capabilities.lsp_middleware.contains(method) {
@@ -251,6 +283,7 @@ impl Plugin {
                     interfaces,
                     launchers,
                     middleware,
+                    task_providers,
                 },
                 capabilities,
             )
@@ -268,6 +301,7 @@ struct Handlers {
     interfaces: Arc<Interfaces>,
     launchers: Arc<HashMap<String, LaunchFn>>,
     middleware: Arc<HashMap<String, MiddlewareFn>>,
+    task_providers: Arc<HashMap<String, TaskFn>>,
 }
 
 fn router(
@@ -281,7 +315,10 @@ fn router(
         interfaces,
         launchers,
         middleware,
+        task_providers,
     } = handlers;
+    let task_state = state.clone();
+    let task_peer = peer.clone();
     let middleware_state = state.clone();
     let middleware_peer = peer.clone();
     let init_state = state.clone();
@@ -391,6 +428,23 @@ fn router(
                     None => Ok(MiddlewareResult::Forward {
                         params: params.params,
                     }),
+                }
+            }
+        })
+        .on_request::<TaskProvide, _, _>(move |params: TaskProvideParams| {
+            let init = lock(&task_state.init).clone();
+            let handler = task_providers.get(&params.task_type).cloned();
+            let peer = task_peer.clone();
+            async move {
+                let Some(init) = init else {
+                    return Err(ResponseError::new(
+                        ErrorCode::InvalidRequest,
+                        "not initialized",
+                    ));
+                };
+                match handler {
+                    Some(handler) => handler(Context { peer, init }).await,
+                    None => Ok(TaskList { tasks: Vec::new() }),
                 }
             }
         })

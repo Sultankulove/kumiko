@@ -154,3 +154,30 @@ notification!(
     ProcessExitedParams,
     "A process started by the plugin exited; its output streams are closed before this."
 );
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RunParams {
+    pub spec: ProcessSpec,
+    /// Written to the process input, which is then closed.
+    #[serde(default)]
+    pub input: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RunResult {
+    /// `null` when killed by a signal.
+    pub exit_code: Option<i32>,
+    /// Output as UTF-8 (invalid bytes replaced), each cut at 8 MiB.
+    pub stdout: String,
+    pub stderr: String,
+}
+
+request!(
+    Run,
+    "process/run",
+    PluginToHost,
+    RunParams,
+    RunResult,
+    "Run a process to its end and return its output (for short commands, e.g. a status query)."
+);

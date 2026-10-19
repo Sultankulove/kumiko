@@ -1,0 +1,35 @@
+# kumiko.java: the Java language plugin (spec, section 18). The language server is JDT LS,
+# started by the core with the command line this plugin gives (`lsp/resolveLaunch`).
+[plugin]
+id = "kumiko.java"
+name = "Java"
+version = "0.1.0"
+api = "^1.0"
+kind = "process"
+entry = "bin/kumiko-java"
+permissions = ["fs.workspace", "fs.home", "process.spawn", "network"]
+activation = [
+  "workspaceContains:**/pom.xml",
+  "onLanguage:java",
+  "onCommand:java.*",
+]
+
+[[contributes.languages]]
+id = "java"
+extensions = [".java"]
+grammar = "kumiko.grammar.java"
+
+[[contributes.languageServers]]
+id = "jdtls"
+languages = ["java"]
+launch = "dynamic"
+
+[[contributes.commands]]
+id = "java.showJdks"
+title = "Java: Show Detected JDKs"
+
+[contributes.configuration]
+schema = "schema/config.json"
+
+[[contributes.taskProviders]]
+type = "maven"

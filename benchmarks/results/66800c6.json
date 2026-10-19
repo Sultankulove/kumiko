@@ -1,0 +1,14 @@
+{
+  "platform": "windows-11 x86_64, release",
+  "project_files": 50000,
+  "cold_start_first_frame_ms": 313,
+  "rss_mb_30s_after_start_with_playground_project": 109.2,
+  "cpu_idle_percent_60s": 0.35,
+  "open_5000_lines_to_highlights_ms": 17.3,
+  "keystroke_to_highlights_p95_ms": 1.4,
+  "indexing_50k_files_ms": 1938,
+  "quick_open_worst_per_char_ms": 18.8,
+  "search_first_result_ms": 13.0,
+  "search_whole_50k_files_ms": 10584,
+  "not_measured": ["rss_10_open_files", "wasm_plugin_overhead", "plugin_activation", "completion_overhead", "fs_changed_storm_ui_freeze", "key_to_pixel_with_rendering"]
+}

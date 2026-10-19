@@ -19,6 +19,16 @@ pub enum Mode {
     Usages,
     /// The new name of a symbol (Shift+F6): the input is the answer.
     Rename,
+    /// Tasks to run (Alt+Shift+F10).
+    Tasks,
+    /// Text in the project's files (Ctrl+Shift+F): the input is the query.
+    FindInFiles,
+    /// A plugin asks for text (`ui/showInput`): the input is the answer.
+    Ask,
+    /// A plugin asks to pick (`ui/showQuickPick`).
+    Pick,
+    /// Kits to apply.
+    Kits,
 }
 
 impl Mode {
@@ -29,7 +39,14 @@ impl Mode {
             Mode::Commands => ">",
             Mode::Line => ":",
             Mode::Symbols => "@",
-            Mode::Themes | Mode::Usages | Mode::Rename => "",
+            Mode::Themes
+            | Mode::Usages
+            | Mode::Rename
+            | Mode::Tasks
+            | Mode::FindInFiles
+            | Mode::Ask
+            | Mode::Pick
+            | Mode::Kits => "",
         }
     }
 }
@@ -46,6 +63,12 @@ pub enum Action {
     OpenAt(Uri, kumiko_types::Position),
     /// Rename to what was typed.
     Rename,
+    /// Run the task with this index of the offered list.
+    RunTask(usize),
+    /// The answer to a plugin's question: the chosen index, or the typed text.
+    Answer(Option<usize>),
+    /// Apply the kit with this index of the offered list.
+    ApplyKit(usize),
     /// Informational row (e.g. "no results").
     None,
 }

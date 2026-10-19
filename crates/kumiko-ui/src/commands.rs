@@ -37,6 +37,11 @@ pub enum UiCommand {
     FindUsages,
     Rename,
     Reformat,
+    RunTask,
+    StopTasks,
+    FindInFiles,
+    NewTerminal,
+    ApplyKit,
     Quit,
 }
 
@@ -53,6 +58,14 @@ const COMMANDS: &[(&str, Parse)] = &[
     }),
     ("workbench.toggleOutput", |_| {
         Ok(UiCommand::Toggle(ToolWindow::Output))
+    }),
+    ("workbench.toggleTerminal", |_| {
+        Ok(UiCommand::Toggle(ToolWindow::Terminal))
+    }),
+    ("workbench.newTerminal", |_| Ok(UiCommand::NewTerminal)),
+    ("workbench.applyKit", |_| Ok(UiCommand::ApplyKit)),
+    ("workbench.toggleCommit", |_| {
+        Ok(UiCommand::Toggle(ToolWindow::Commit))
     }),
     ("workbench.openFile", open_file),
     ("workbench.quickOpen", |_| {
@@ -84,6 +97,9 @@ const COMMANDS: &[(&str, Parse)] = &[
     ("workbench.findUsages", |_| Ok(UiCommand::FindUsages)),
     ("workbench.rename", |_| Ok(UiCommand::Rename)),
     ("workbench.reformat", |_| Ok(UiCommand::Reformat)),
+    ("workbench.runTask", |_| Ok(UiCommand::RunTask)),
+    ("workbench.findInFiles", |_| Ok(UiCommand::FindInFiles)),
+    ("workbench.stopTasks", |_| Ok(UiCommand::StopTasks)),
     ("workbench.quit", |_| Ok(UiCommand::Quit)),
 ];
 

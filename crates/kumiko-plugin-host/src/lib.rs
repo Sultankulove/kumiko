@@ -5,6 +5,7 @@
 
 #[cfg(windows)]
 mod job;
+pub mod kit;
 pub mod manifest;
 pub mod registry;
 pub mod store;

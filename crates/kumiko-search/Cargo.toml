@@ -16,6 +16,7 @@ kumiko-types.workspace = true
 kumiko-service-api.workspace = true
 ignore.workspace = true
 nucleo-matcher.workspace = true
+regex.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -4,7 +4,7 @@
 id = "kumiko.hello-c"
 name = "Hello (C)"
 version = "0.1.0"
-api = "^0.1"
+api = "^1.0"
 kind = "wasm"
 entry = "plugin.wasm"
 activation = ["onCommand:hello-c.*"]

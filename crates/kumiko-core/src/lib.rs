@@ -47,9 +47,13 @@ use kumiko_types::paths::workspace_settings_dir;
 use kumiko_types::{KumikoDirs, PluginId};
 use kumiko_wasm_host::{WasmConfig, WasmEngine};
 
+pub mod kits;
 mod language_host;
 pub mod output;
+pub mod plugin_ui;
 mod plugins;
+pub mod tasks;
+pub mod terminals;
 
 pub use language_host::LANGUAGE_CHANNEL;
 
@@ -85,6 +89,9 @@ pub struct CoreOptions {
     pub plugins: SupervisorConfig,
     /// WASM runtime limits; the compilation cache defaults to `dirs.wasm_cache_dir()`.
     pub wasm: WasmConfig,
+    /// Plugins shipped with the distribution, one folder per id (`<dir>/<id>/plugin.toml`):
+    /// where kits install missing plugins from.
+    pub bundled_plugins: Option<PathBuf>,
     /// Output channels; pass one in to have logging reach it from the start.
     pub output: output::Output,
 }
@@ -103,6 +110,7 @@ impl CoreOptions {
             watcher: WatcherConfig::default(),
             plugins: SupervisorConfig::default(),
             wasm,
+            bundled_plugins: None,
             output: output::Output::new(),
         }
     }
@@ -121,6 +129,11 @@ struct Inner {
     files: Arc<FileIndex>,
     syntax: Arc<SyntaxService>,
     language: kumiko_lsp::LanguageService,
+    processes: Arc<dyn kumiko_service_api::Processes>,
+    runs: tasks::Runs,
+    pty: Arc<dyn kumiko_service_api::PtyProcesses>,
+    terminals: terminals::Terminals,
+    plugin_ui: plugin_ui::PluginUi,
     reindex: Arc<tokio::sync::Notify>,
     plugins: plugins::PluginManager,
     tasks: Mutex<Vec<JoinHandle<()>>>,
@@ -235,6 +248,7 @@ impl CoreApi {
             }
         };
         let language_slot = Arc::new(std::sync::OnceLock::new());
+        let core_slot = Arc::new(std::sync::OnceLock::new());
         let services = plugins::Services {
             commands: commands.clone(),
             config: config.clone(),
@@ -242,12 +256,14 @@ impl CoreApi {
             events: sink.clone(),
             locale: options.locale.clone(),
             language: language_slot.clone(),
+            core: core_slot.clone(),
         };
         let plugins =
             plugins::PluginManager::start(&options.dirs, services, options.plugins.clone(), wasm);
 
-        let processes: Arc<dyn kumiko_service_api::Processes> =
-            Arc::new(kumiko_process::ProcessService::new());
+        let process_service = Arc::new(kumiko_process::ProcessService::new());
+        let processes: Arc<dyn kumiko_service_api::Processes> = process_service.clone();
+        let pty: Arc<dyn kumiko_service_api::PtyProcesses> = process_service;
         let core = Self {
             inner: Arc::new_cyclic(|weak| Inner {
                 options,
@@ -262,15 +278,22 @@ impl CoreApi {
                 files: Arc::new(FileIndex::new()),
                 syntax,
                 language: kumiko_lsp::LanguageService::new(
-                    processes,
+                    processes.clone(),
                     Arc::new(language_host::Host { core: weak.clone() }),
                 ),
+                processes,
+                runs: tasks::Runs::default(),
+                pty,
+                terminals: terminals::Terminals::default(),
+                plugin_ui: plugin_ui::PluginUi::default(),
                 reindex: Arc::new(tokio::sync::Notify::new()),
                 plugins,
                 tasks: Mutex::default(),
             }),
         };
         let _ = language_slot.set(core.inner.language.clone());
+        let _ = core_slot.set(Arc::downgrade(&core.inner));
+        core.restore_kit();
         core.spawn_wiring();
         core.spawn_indexer();
         let wiring = language_host::spawn_wiring(&core);
@@ -433,6 +456,37 @@ impl CoreApi {
     /// The Syntax service (grammars, trees).
     pub fn syntax(&self) -> &SyntaxService {
         &self.inner.syntax
+    }
+
+    /// Find in Files: matches stream in as they are found, at most `limit`; dropping the
+    /// receiver stops the search. Open documents are searched in their current text.
+    pub fn search_text(
+        &self,
+        query: &kumiko_search::text::TextQuery,
+        limit: usize,
+    ) -> Result<tokio::sync::mpsc::UnboundedReceiver<kumiko_search::text::TextMatch>, String> {
+        let regex = query.compile()?;
+        let files = self.inner.files.files();
+        let open: std::collections::HashMap<kumiko_types::Uri, String> = self
+            .inner
+            .documents
+            .list()
+            .into_iter()
+            .map(|s| (s.uri, s.text.to_string()))
+            .collect();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::task::spawn_blocking(move || {
+            let mut sent = 0;
+            kumiko_search::text::search(&files, &open, &regex, |found| {
+                sent += 1;
+                if tx.send(found).is_err() || sent >= limit {
+                    std::ops::ControlFlow::Break(())
+                } else {
+                    std::ops::ControlFlow::Continue(())
+                }
+            });
+        });
+        Ok(rx)
     }
 
     /// The Language service (language servers: diagnostics, completion, navigation, fixes).

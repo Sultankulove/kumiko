@@ -1,0 +1,27 @@
+# Kit `java` (spec, section 15): Java with JDT LS, Maven tasks, Git and the terminal.
+# Missing plugins come from the distribution's bundled plugins (`<dir>/<id>`).
+[resource]
+id = "kumiko.kit.java"
+kind = "kit"
+version = "0.1.0"
+name = "Java Developer"
+
+[kit]
+id = "kumiko.kit.java"
+name = "Java Developer"
+version = "0.1.0"
+kumiko = "^0.1"
+description = "Java + Maven + Git + Terminal"
+exclusive = false
+
+[plugins]
+"kumiko.java" = "^0.1"
+"kumiko.git" = "^0.1"
+"kumiko.terminal" = "^0.1"
+
+[resources]
+grammars = ["kumiko.grammar.java"]
+theme = "kumiko.theme.darcula"
+
+[settings]
+"editor.fontSize" = 14

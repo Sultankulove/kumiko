@@ -183,6 +183,10 @@ fn all_samples() -> Samples {
             },
             config: json!({"sample.enabled": true}),
             locale: "ru".into(),
+            storage: Some(lifecycle::PluginStorage {
+                data: "/d/sample".into(),
+                cache: "/c/sample".into(),
+            }),
         },
         lifecycle::InitializeResult {
             api_version: "0.1.0".into(),
@@ -515,6 +519,30 @@ fn all_samples() -> Samples {
         },
         (),
     );
+    s.req::<process::Run>(
+        process::RunParams {
+            spec: spec(),
+            input: Some(
+                "y
+"
+                .into(),
+            ),
+        },
+        process::RunResult {
+            exit_code: Some(0),
+            stdout: "ok".into(),
+            stderr: String::new(),
+        },
+    );
+    s.req::<terminal::TerminalOpen>(
+        terminal::TerminalOpenParams {
+            title: "Local".into(),
+            spec: spec(),
+        },
+        terminal::TerminalOpenResult {
+            terminal: events::TerminalId(2),
+        },
+    );
 
     // process
     let pid = process::ProcessId(77);
@@ -592,6 +620,13 @@ fn all_samples() -> Samples {
         },
     );
     s.req::<lsp::LspSendRequest>(lsp_message, json!([1, 2, 3]));
+    s.req::<lsp::LspApplyEdit>(
+        lsp::LspApplyEditParams {
+            server_id: "jdtls".into(),
+            edit: json!({"changes": {}}),
+        },
+        true,
+    );
 
     // service
     let interface = InterfaceId::new("org.example.repository").unwrap();
@@ -683,6 +718,18 @@ fn all_samples() -> Samples {
         uris: vec![Uri::parse("file:///w/src/A.txt").unwrap()],
     });
     s.event(events::LanguageStatusChanged {});
+    s.event(events::TerminalOpened {
+        terminal: events::TerminalId(1),
+        title: "Local".into(),
+    });
+    s.event(events::TerminalClosed {
+        terminal: events::TerminalId(1),
+        exit_code: Some(0),
+    });
+    s.event(events::UiChanged {
+        what: "tree".into(),
+        view: Some("sample.changes".into()),
+    });
     s
 }
 

@@ -4,6 +4,7 @@
 
 #[cfg(windows)]
 mod job;
+mod pty;
 
 use std::process::Stdio;
 

@@ -24,6 +24,16 @@ pub struct InitializeParams {
     pub config: Value,
     /// UI locale, e.g. `en` or `ru`.
     pub locale: String,
+    /// Directories of the plugin's own, created by the host.
+    #[serde(default)]
+    pub storage: Option<PluginStorage>,
+}
+
+/// Where a plugin keeps files: `data` survives updates of the plugin, `cache` may be deleted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PluginStorage {
+    pub data: String,
+    pub cache: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]

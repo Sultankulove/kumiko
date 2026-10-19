@@ -14,3 +14,7 @@ workspace = true
 [dependencies]
 kumiko-core.workspace = true
 kumiko-types.workspace = true
+alacritty_terminal.workspace = true
+gpui.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true

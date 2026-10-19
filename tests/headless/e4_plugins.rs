@@ -40,7 +40,7 @@ async fn contributions_are_registered_at_startup() {
             "test.echo",
             &format!(
                 "{}{}",
-                header("test.echo", "^0.1"),
+                header("test.echo", "^1.0"),
                 r#"
 [[contributes.commands]]
 id = "echo.say"
@@ -79,7 +79,7 @@ schema = "schema/config.json"
         plugin(
             &plugins,
             "test.rogue",
-            &format!("{}[contributes.configuration]\nschema = \"config.json\"\n", header("test.rogue", "^0.1")),
+            &format!("{}[contributes.configuration]\nschema = \"config.json\"\n", header("test.rogue", "^1.0")),
             &[
                 ("bin/run", ""),
                 (

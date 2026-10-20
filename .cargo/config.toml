@@ -1,3 +1,9 @@
 [alias]
 # Build tasks in Rust, not shell scripts (ADR-020): `cargo xtask dist`.
 xtask = "run --package xtask --"
+
+# Windows: rust-lld (shipped with the toolchain) instead of MSVC link.exe, which is much
+# slower on the large test and app binaries. Linux already links with rust-lld by default
+# since Rust 1.90; mold measured no faster there (docs/acceptance/e16-build-speed.md).
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"

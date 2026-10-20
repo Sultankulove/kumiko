@@ -243,6 +243,37 @@ async fn rebasing_needs_the_history() {
 }
 
 #[tokio::test]
+async fn back_to_the_stored_text_is_clean() {
+    // Every edit its own undo step.
+    let f = fixture(DocumentsConfig {
+        undo_group_window: Duration::ZERO,
+        ..DocumentsConfig::default()
+    });
+    let a = uri("a.txt");
+    f.fs.put(&a, b"hello\n");
+    let id = f.docs.open(&a, None).await.unwrap().id;
+    let dirty = |f: &Fixture| f.docs.snapshot(id).unwrap().dirty;
+
+    // Undo of everything since opening.
+    f.docs.apply(id, v(1), vec![edit(0, 5, 0, 5, "!")]).unwrap();
+    assert!(dirty(&f));
+    f.docs.undo(id).unwrap();
+    assert!(!dirty(&f), "undone to the stored text");
+    f.docs.redo(id).unwrap();
+    assert!(dirty(&f));
+
+    // Typed back by hand, and the same after a save.
+    f.docs.apply(id, v(4), vec![edit(0, 5, 0, 6, "")]).unwrap();
+    assert!(!dirty(&f));
+    f.docs.apply(id, v(5), vec![edit(0, 0, 0, 0, "x")]).unwrap();
+    f.docs.save(id).await.unwrap();
+    f.docs.apply(id, v(6), vec![edit(0, 0, 0, 1, "")]).unwrap();
+    assert!(dirty(&f), "differs from what was saved");
+    f.docs.undo(id).unwrap();
+    assert!(!dirty(&f));
+}
+
+#[tokio::test]
 async fn undo_groups_by_time_and_redo() {
     let f = fixture(DocumentsConfig {
         undo_group_window: Duration::from_secs(60),

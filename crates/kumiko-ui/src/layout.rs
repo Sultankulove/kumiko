@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 pub const MENU_BAR_HEIGHT: f32 = 26.0;
 pub const TOOLBAR_HEIGHT: f32 = 32.0;
-pub const STRIPE_WIDTH: f32 = 22.0;
+pub const STRIPE_WIDTH: f32 = 30.0;
 pub const BOTTOM_STRIPE_HEIGHT: f32 = 22.0;
 pub const STATUS_BAR_HEIGHT: f32 = 24.0;
 pub const TAB_BAR_HEIGHT: f32 = 28.0;
@@ -63,6 +63,17 @@ impl ToolWindow {
             ToolWindow::Output => "toolWindow.output",
             ToolWindow::Terminal => "toolWindow.terminal",
             ToolWindow::Commit => "toolWindow.commit",
+        }
+    }
+
+    /// The icon token of its stripe button (spec, section 21).
+    pub fn icon_token(self) -> &'static str {
+        match self {
+            ToolWindow::Project => "toolwindow.project",
+            ToolWindow::Problems => "toolwindow.problems",
+            ToolWindow::Output => "toolwindow.output",
+            ToolWindow::Terminal => "toolwindow.terminal",
+            ToolWindow::Commit => "toolwindow.commit",
         }
     }
 
@@ -231,10 +242,10 @@ mod tests {
             "\
 menu_bar           0      0   1280     26
 toolbar            0     26   1280     32
-left_stripe        0     58     22    696
-left_panel        22     58    280    696
-editor           302     58    956    696
-right_stripe    1258     58     22    696
+left_stripe        0     58     30    696
+left_panel        30     58    280    696
+editor           310     58    940    696
+right_stripe    1250     58     30    696
 bottom_stripe      0    754   1280     22
 status_bar         0    776   1280     24
 "
@@ -248,13 +259,13 @@ status_bar         0    776   1280     24
         let regions = state.regions(1280.0, 800.0);
         assert_eq!(
             regions.bottom_panel,
-            Some(Rect::new(22.0, 534.0, 1236.0, 220.0))
+            Some(Rect::new(30.0, 534.0, 1220.0, 220.0))
         );
         assert_eq!(
             regions.left_panel,
-            Some(Rect::new(22.0, 58.0, 280.0, 476.0))
+            Some(Rect::new(30.0, 58.0, 280.0, 476.0))
         );
-        assert_eq!(regions.editor, Rect::new(302.0, 58.0, 956.0, 476.0));
+        assert_eq!(regions.editor, Rect::new(310.0, 58.0, 940.0, 476.0));
     }
 
     #[test]
@@ -269,7 +280,7 @@ status_bar         0    776   1280     24
         state.toggle(ToolWindow::Project);
         assert_eq!((state.left, state.bottom), (None, None));
         let regions = state.regions(1280.0, 800.0);
-        assert_eq!(regions.editor, Rect::new(22.0, 58.0, 1236.0, 696.0));
+        assert_eq!(regions.editor, Rect::new(30.0, 58.0, 1220.0, 696.0));
     }
 
     #[test]

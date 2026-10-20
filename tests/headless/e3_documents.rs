@@ -77,10 +77,15 @@ async fn open_edit_save_and_detect_external_changes() {
     assert_eq!(
         reloaded.version,
         DocumentVersion(v2.0 + 1),
-        "exactly one reload"
+        "the save itself was not reloaded"
     );
+    // `fs::write` truncates first: a watcher may see the empty file and reload twice.
+    eventually("the external text", || {
+        docs.snapshot(doc.id).unwrap().text == "changed outside\n"
+    })
+    .await
+    .unwrap();
     let snapshot = docs.snapshot(doc.id).unwrap();
-    assert_eq!(snapshot.text.to_string(), "changed outside\n");
     assert!(!snapshot.dirty && !snapshot.conflict);
 
     // With unsaved edits the user's text stays and a conflict is flagged.

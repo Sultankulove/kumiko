@@ -11,6 +11,7 @@ mod e11_terminal;
 mod e12_git;
 mod e13_kits;
 mod e14_bench;
+mod e15_bench;
 mod e15_petclinic;
 mod e3_documents;
 mod e4_plugins;

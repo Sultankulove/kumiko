@@ -1,0 +1,23 @@
+{
+  "platform": "linux x86_64 (cloud container, 4 vCPU Xeon 2.1 GHz), release, headless (no window)",
+  "project_files": 50000,
+  "indexing_50k_files_ms": 671,
+  "quick_open_worst_per_char_ms": 13.0,
+  "search_first_result_ms": 1.97,
+  "search_whole_50k_files_ms": 608,
+  "wasm_activation_cold_ms": 151.52,
+  "wasm_activation_cached_ms": 4.58,
+  "process_activation_ms": 4.23,
+  "wasm_idle_overhead_mb": 1.9,
+  "wasm_first_plugin_with_engine_mb": 26.5,
+  "completion_roundtrip_p50_ms": 0.17,
+  "completion_roundtrip_p95_ms": 0.23,
+  "rss_mb_core_10_open_files": 49.66,
+  "fs_changed_storm_worst_latency_ms": 1.55,
+  "not_measured": [
+    "cold_start_first_frame (needs a window)",
+    "rss_with_window_10_open_files",
+    "key_to_pixel_with_rendering",
+    "cpu_idle_with_window"
+  ]
+}

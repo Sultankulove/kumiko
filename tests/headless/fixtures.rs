@@ -57,3 +57,38 @@ pub fn plugin_source(
     }
     source
 }
+
+/// The parser library of `resources/grammars/java`, built next to the test binaries where the
+/// Syntax service looks for it in development builds. Once per run, in a target directory of
+/// its own: built with the workspace, the parser's dependencies get other features and the
+/// library would be relinked by every other build while cores of other tests have it loaded
+/// (which Windows refuses). Every test that wants Java highlighting calls this first.
+pub fn build_java_grammar() {
+    static BUILT: std::sync::Once = std::sync::Once::new();
+    BUILT.call_once(|| {
+        let deps = std::env::current_exe().unwrap();
+        let profile_dir = deps
+            .parent()
+            .and_then(|d| d.parent())
+            .unwrap()
+            .to_path_buf();
+        let own_target = profile_dir.parent().unwrap().join("fixtures");
+        let own_target = own_target.to_string_lossy().into_owned();
+        let mut args = vec!["--target-dir", own_target.as_str()];
+        if !cfg!(debug_assertions) {
+            args.push("--release");
+        }
+        let built = build(
+            "kumiko-grammar-java",
+            &args,
+            "kumiko_grammar_java",
+            std::env::consts::DLL_EXTENSION,
+        );
+        let target = profile_dir.join(built.file_name().unwrap());
+        let same = std::fs::read(&target).ok() == std::fs::read(&built).ok();
+        if !same && let Err(error) = std::fs::copy(&built, &target) {
+            // Loaded by another test: the library there is the same parser.
+            assert!(target.exists(), "cannot place the grammar library: {error}");
+        }
+    });
+}

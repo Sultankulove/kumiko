@@ -87,6 +87,7 @@ fn state_is(state: PluginState) -> impl FnMut(&Event) -> bool {
 /// package; nothing fails, nothing starts.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn without_the_java_plugin() {
+    fixtures::build_java_grammar();
     let ide = Headless::start().await.unwrap();
     let path = ide.write("src/App.java", "class App { int x; }\n").unwrap();
     ide.core.open_folder(ide.workspace()).await.unwrap();

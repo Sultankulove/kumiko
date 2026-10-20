@@ -25,7 +25,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - run: rustup show active-toolchain || rustup toolchain install
+      # rust-cache keys on every installed toolchain; the runner images' own stable changes
+      # (1.99.0 / 1.99.1), which made Linux miss the cache. Only rust-toolchain.toml's remains.
+      - name: Toolchain
+        shell: bash
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup toolchain uninstall stable || true
       - uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.event_name == 'push' }}

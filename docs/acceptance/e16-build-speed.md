@@ -53,4 +53,4 @@ sccache не добавлен: `rust-cache` уже кеширует `target/` ц
 | clippy (Windows / Linux) | 2 мин 15 с / 1 мин 14 с | 1 мин 51 с / 3 мин 54 с | Linux без кеша |
 | Весь прогон | ≈ 19 мин | 6 мин 21 с | |
 
-Windows ускорился больше всего: rust-lld и кеш из `staging`. На Linux кеш `staging` для этих задач пока не подхватывается — разобраться в E17 (ключи кеша `rust-cache` для Linux).
+Windows ускорился больше всего: rust-lld и кеш из `staging`. На Linux кеш не подхватился по другой причине: `rust-cache` включает в ключ версии всех установленных toolchain, а предустановленный stable на образах Linux разный (на push в `staging` — 1.99.1, на PR — 1.99.0). Теперь перед кешем stable удаляется, остаётся только toolchain из `rust-toolchain.toml`.

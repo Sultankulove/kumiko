@@ -1,0 +1,32 @@
+<!-- Windows installer of the distribution (spec v1.1, section 7.3), WiX Toolset 5:
+     wix build packaging/windows/kumiko.wxs -d Version=0.1.0 -d DistDir=<folder> -o kumiko.msi -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Kumiko" Manufacturer="Kumiko" Version="$(Version)"
+           UpgradeCode="6B0C9B5E-2F1D-4D6A-9A47-3C8E2D1F7A10" Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Kumiko is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Kumiko" />
+    </StandardDirectory>
+
+    <!-- Everything `cargo xtask dist` lays out: kumiko.exe, resources\, plugins\. -->
+    <ComponentGroup Id="Distribution" Directory="INSTALLFOLDER">
+      <Files Include="$(DistDir)\**" />
+    </ComponentGroup>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="KumikoShortcut" Name="Kumiko" Target="[INSTALLFOLDER]kumiko.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKLM" Key="Software\Kumiko" Name="StartMenuShortcut"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="Main">
+      <ComponentGroupRef Id="Distribution" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>

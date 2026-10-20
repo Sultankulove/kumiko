@@ -32,7 +32,7 @@ use crate::a11y::{AccessNode, AccessTree, Bridge};
 use crate::commands::{NEEDS_ARGUMENTS, UiCommand};
 use crate::editor::{EditorHandle, EditorProvider, EditorTheme};
 use crate::keys;
-use crate::layout::{LayoutState, Rect, Regions, Side, TAB_BAR_HEIGHT, ToolWindow};
+use crate::layout::{LayoutState, Rect, Regions, STRIPE_WIDTH, Side, TAB_BAR_HEIGHT, ToolWindow};
 use crate::menus::{self, CommandLookup, Menu};
 use crate::palette::Palette;
 use crate::problems::{self, Group, Problem, Severity};
@@ -40,6 +40,7 @@ use crate::quick_open::{self, Action, Item, Mode, QuickOpen};
 use crate::state::{self, GroupState, WorkspaceState};
 use crate::tabs::{Split, Tab, Tabs};
 use crate::terminal::TerminalProvider;
+use crate::tooltip::Tooltip;
 
 mod kits;
 mod language;
@@ -98,6 +99,8 @@ pub struct Workbench {
     runtime: Handle,
     locale: String,
     palette: Palette,
+    /// SVG files of the icon tokens the workbench draws, from the icon pack.
+    icons: HashMap<&'static str, SharedString>,
     layout: LayoutState,
     root_focus: FocusHandle,
     project_focus: FocusHandle,
@@ -184,6 +187,7 @@ impl Workbench {
     ) -> Self {
         let locale = core.locale();
         let palette = palette(&core);
+        let icons = icons(&core);
         // Commands handled on the core's side arrive here, on the UI thread.
         cx.spawn(async move |this, cx| {
             let mut requests = requests;
@@ -200,6 +204,7 @@ impl Workbench {
             runtime,
             locale,
             palette,
+            icons,
             layout: LayoutState::default(),
             root_focus: cx.focus_handle(),
             project_focus: cx.focus_handle(),
@@ -1106,6 +1111,7 @@ impl Workbench {
     /// Settings the workbench shows changed: colours, language, menus.
     fn reload_settings(&mut self, cx: &mut Context<Self>) {
         self.palette = palette(&self.core);
+        self.icons = icons(&self.core);
         self.locale = self.core.locale();
         self.menus = self.build_menus();
         let theme = self.editor_theme();
@@ -1742,6 +1748,23 @@ fn palette(core: &CoreApi) -> Palette {
     theme.map_or_else(Palette::fallback, |theme| Palette::from_theme(&theme))
 }
 
+/// The icons of the tool-window buttons from the pack `workbench.iconTheme` names, or any
+/// pack that has them.
+fn icons(core: &CoreApi) -> HashMap<&'static str, SharedString> {
+    let wanted = core
+        .config()
+        .get("workbench.iconTheme", None)
+        .and_then(|v| v.as_str().map(str::to_owned));
+    ToolWindow::ALL
+        .into_iter()
+        .filter_map(|tool| {
+            let token = tool.icon_token();
+            let path = core.resources().icon(token, wanted.as_deref())?;
+            Some((token, path.to_string_lossy().into_owned().into()))
+        })
+        .collect()
+}
+
 /// An absolutely placed box for a region.
 fn place(rect: Rect) -> gpui::Div {
     div()
@@ -2358,21 +2381,47 @@ impl Workbench {
                     .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.execute_id(command, Vec::new(), cx);
                     }));
+                let icon = self.icons.get(tool.icon_token()).map(|path| {
+                    gpui::svg()
+                        .path(path.clone())
+                        .size(px(16.0))
+                        .flex_none()
+                        .text_color(rgba(if open { p.foreground } else { p.muted }))
+                });
                 match side {
-                    // Classic UI writes side buttons vertically; GPUI does not rotate text,
-                    // so the letters are stacked.
-                    Side::Left => button
-                        .w_full()
-                        .py_2()
+                    // As in the New UI: an icon, the name in a tooltip (GPUI does not rotate
+                    // text). Without an icon pack, the first letter.
+                    Side::Left => {
+                        let text: SharedString = title.clone().into();
+                        let (background, foreground, border) = (p.popup, p.foreground, p.border);
+                        button
+                            .w_full()
+                            .h(px(STRIPE_WIDTH))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .tooltip(move |_window, cx| {
+                                let tooltip = Tooltip {
+                                    text: text.clone(),
+                                    background,
+                                    foreground,
+                                    border,
+                                };
+                                cx.new(|_| tooltip).into()
+                            })
+                            .children(icon)
+                            .when(!self.icons.contains_key(tool.icon_token()), |d| {
+                                d.child(title.chars().next().map(String::from).unwrap_or_default())
+                            })
+                    }
+                    Side::Bottom => button
+                        .h_full()
+                        .px_2()
                         .flex()
-                        .flex_col()
                         .items_center()
-                        .children(
-                            title
-                                .chars()
-                                .map(|c| div().h(px(13.0)).child(c.to_string())),
-                        ),
-                    Side::Bottom => button.h_full().px_2().flex().items_center().child(title),
+                        .gap_1()
+                        .children(icon)
+                        .child(title),
                 }
             });
         let stripe = place(rect).bg(rgba(p.stripe)).border_color(rgba(p.border));

@@ -243,6 +243,22 @@ impl ResourceRegistry {
         Some(theme)
     }
 
+    /// The SVG file of an icon token (`toolwindow.project`): from the `preferred` icon pack
+    /// when it has the token, else from the first pack, by id, that does.
+    pub fn icon(&self, token: &str, preferred: Option<&str>) -> Option<PathBuf> {
+        let state = read(&self.state);
+        let file = |package: &ResourcePackage| {
+            let name = package.manifest.get("icons")?.get(token)?.as_str()?;
+            Some(package.dir.join(name))
+        };
+        let icons = |package: &&ResourcePackage| package.kind == ResourceKind::Icons;
+        preferred
+            .and_then(|id| state.packages.get(id))
+            .filter(icons)
+            .and_then(file)
+            .or_else(|| state.packages.values().filter(icons).find_map(file))
+    }
+
     /// Translation of `key` for `locale` (`ru-RU` → `ru` → `en`), or the key itself.
     pub fn localize(&self, key: &str, locale: &str) -> String {
         let state = read(&self.state);
@@ -313,6 +329,19 @@ fn validate(package: &ResourcePackage) -> Vec<ResourceProblem> {
             }
             problems
         }
+        ResourceKind::Icons => match package.manifest.get("icons").and_then(Value::as_object) {
+            None => vec![problem("missing `[icons]` table".into())],
+            Some(icons) => icons
+                .iter()
+                .filter_map(|(token, file)| match file.as_str() {
+                    None => Some(problem(format!("icon `{token}` is not a file name"))),
+                    Some(name) if !package.dir.join(name).is_file() => {
+                        Some(problem(format!("icon `{token}`: `{name}` not found")))
+                    }
+                    Some(_) => None,
+                })
+                .collect(),
+        },
         _ => Vec::new(),
     }
 }

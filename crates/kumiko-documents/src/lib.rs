@@ -118,6 +118,9 @@ struct Document {
     text: Rope,
     version: DocumentVersion,
     saved_version: Option<DocumentVersion>,
+    /// The text as stored, to see that edits or undo brought it back (the rope shares its
+    /// nodes with `text`, so keeping it is cheap).
+    saved_text: Rope,
     format: TextFormat,
     disk_hash: Option<u64>,
     pending_hash: Option<u64>,
@@ -217,6 +220,7 @@ impl DocumentService {
             text: Rope::from_str(&text),
             version,
             saved_version: Some(version),
+            saved_text: Rope::from_str(&text),
             format,
             disk_hash: Some(disk_hash),
             pending_hash: None,
@@ -343,6 +347,11 @@ impl DocumentService {
     ) -> Result<DocumentVersion, DocError> {
         let applied = text::apply(&mut doc.text, edits)?;
         doc.version = doc.version.next();
+        // Back to the stored text (all edits undone, or typed back): clean again. The full
+        // comparison runs only when the lengths match.
+        if doc.text.len_bytes() == doc.saved_text.len_bytes() && doc.text == doc.saved_text {
+            doc.saved_version = Some(doc.version);
+        }
         doc.history.push_back((doc.version, applied.edits.clone()));
         while doc.history.len() > self.config.history_len {
             doc.history.pop_front();
@@ -421,7 +430,7 @@ impl DocumentService {
 
     /// Writes the document in its original encoding and line endings.
     pub async fn save(&self, id: DocumentId) -> Result<DocumentVersion, DocError> {
-        let (uri, bytes, version, content_hash) = {
+        let (uri, bytes, version, content_hash, text) = {
             let mut state = lock(&self.state);
             let doc = state.docs.get_mut(&id).ok_or(DocError::NotOpen(id))?;
             let bytes =
@@ -433,7 +442,13 @@ impl DocumentService {
                 })?;
             let content_hash = hash(&bytes);
             doc.pending_hash = Some(content_hash);
-            (doc.uri.clone(), bytes, doc.version, content_hash)
+            (
+                doc.uri.clone(),
+                bytes,
+                doc.version,
+                content_hash,
+                doc.text.clone(),
+            )
         };
         let written = self.fs.write(&uri, bytes, WriteOptions::UPSERT).await;
 
@@ -446,6 +461,10 @@ impl DocumentService {
         written?;
         doc.disk_hash = Some(content_hash);
         doc.saved_version = Some(version);
+        doc.saved_text = text;
+        if doc.version != version && doc.text == doc.saved_text {
+            doc.saved_version = Some(doc.version);
+        }
         doc.conflict = false;
         self.events
             .publish(Event::core(&DocumentSaved { uri, version }));
@@ -470,6 +489,7 @@ impl DocumentService {
         let version = self.commit(doc, vec![whole], Origin::Reload)?;
         doc.format = format;
         doc.saved_version = Some(version);
+        doc.saved_text = doc.text.clone();
         doc.disk_hash = Some(hash(bytes));
         doc.conflict = false;
         Ok(version)

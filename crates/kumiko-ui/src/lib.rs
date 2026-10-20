@@ -13,6 +13,7 @@ use kumiko_core::CoreApi;
 use tokio::runtime::Handle;
 
 mod a11y;
+mod assets;
 mod commands;
 pub mod editor;
 mod input;
@@ -25,6 +26,7 @@ mod quick_open;
 mod state;
 mod tabs;
 pub mod terminal;
+mod tooltip;
 mod tree;
 mod workbench;
 
@@ -46,45 +48,49 @@ pub fn run(
     commands::register(&core, &requests, editors.commands());
     drop(requests);
     let title = core.resources().localize("app.name", &core.locale());
-    Application::new().run(move |cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            // AccessKit's Windows adapter must subclass the window before it is shown.
-            show: false,
-            // WM_CLASS on X11, app id on Wayland: lets the desktop match the `.desktop` file.
-            app_id: Some("kumiko".to_owned()),
-            titlebar: Some(TitlebarOptions {
-                title: Some(title.into()),
-                ..TitlebarOptions::default()
-            }),
-            ..WindowOptions::default()
-        };
-        let opened = cx.open_window(options, |_, cx| {
-            cx.new(|cx| Workbench::new(core, runtime, received, started, editors, terminals, cx))
-        });
-        let window = match opened {
-            Ok(window) => window,
-            Err(error) => {
-                tracing::error!("cannot open the window: {error:#}");
-                cx.quit();
-                return;
+    Application::new()
+        .with_assets(assets::Files)
+        .run(move |cx: &mut App| {
+            let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                // AccessKit's Windows adapter must subclass the window before it is shown.
+                show: false,
+                // WM_CLASS on X11, app id on Wayland: lets the desktop match the `.desktop` file.
+                app_id: Some("kumiko".to_owned()),
+                titlebar: Some(TitlebarOptions {
+                    title: Some(title.into()),
+                    ..TitlebarOptions::default()
+                }),
+                ..WindowOptions::default()
+            };
+            let opened = cx.open_window(options, |_, cx| {
+                cx.new(|cx| {
+                    Workbench::new(core, runtime, received, started, editors, terminals, cx)
+                })
+            });
+            let window = match opened {
+                Ok(window) => window,
+                Err(error) => {
+                    tracing::error!("cannot open the window: {error:#}");
+                    cx.quit();
+                    return;
+                }
+            };
+            let shown = window.update(cx, |workbench, window, cx| {
+                workbench.attach(window, cx);
+                window.activate_window();
+            });
+            if let Err(error) = shown {
+                tracing::error!("cannot show the window: {error:#}");
             }
-        };
-        let shown = window.update(cx, |workbench, window, cx| {
-            workbench.attach(window, cx);
-            window.activate_window();
+            // Closing the window ends the IDE.
+            cx.on_window_closed(|cx| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
+            cx.activate(true);
         });
-        if let Err(error) = shown {
-            tracing::error!("cannot show the window: {error:#}");
-        }
-        // Closing the window ends the IDE.
-        cx.on_window_closed(|cx| {
-            if cx.windows().is_empty() {
-                cx.quit();
-            }
-        })
-        .detach();
-        cx.activate(true);
-    });
 }

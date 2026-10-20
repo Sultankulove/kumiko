@@ -34,6 +34,10 @@ fn shipped_resources_are_valid() {
     );
     assert_eq!(registry.list(ResourceKind::L10n).len(), 2);
     assert_eq!(registry.list(ResourceKind::Keymap).len(), 1);
+    for tool in ["project", "commit", "problems", "output", "terminal"] {
+        let icon = registry.icon(&format!("toolwindow.{tool}"), None).unwrap();
+        assert!(icon.is_file(), "{}", icon.display());
+    }
 
     // Every label a shipped manifest uses is translated in every shipped locale.
     for package in [
@@ -160,4 +164,43 @@ fn colors_parse() {
     assert_eq!(Color::parse("#fff"), None);
     assert_eq!(Color::parse("123456"), None);
     assert_eq!(Color::parse("#12345G"), None);
+}
+
+#[test]
+fn icons_come_from_the_preferred_pack_then_any() {
+    let root = tempfile::tempdir().unwrap();
+    for (dir, id, tokens) in [
+        ("a", "test.icons.a", ["one", "two"]),
+        ("b", "test.icons.b", ["one", "three"]),
+    ] {
+        let mut text = format!("[resource]\nid = \"{id}\"\nkind = \"icons\"\n[icons]\n");
+        for token in tokens {
+            text.push_str(&format!("\"{token}\" = \"{token}.svg\"\n"));
+            std::fs::create_dir_all(root.path().join(dir)).unwrap();
+            std::fs::write(root.path().join(dir).join(format!("{token}.svg")), "<svg/>").unwrap();
+        }
+        package(root.path(), dir, &text);
+    }
+    package(
+        root.path(),
+        "broken",
+        "[resource]\nid = \"test.icons.broken\"\nkind = \"icons\"\n[icons]\nx = \"missing.svg\"\n",
+    );
+    let registry = ResourceRegistry::new();
+    let problems = registry.scan(&[root.path().to_path_buf()]);
+    assert_eq!(problems.len(), 1, "{problems:#?}");
+    assert!(problems[0].message.contains("missing.svg"));
+
+    let from = |token: &str, preferred| {
+        let path = registry.icon(token, preferred)?;
+        Some(path.parent()?.file_name()?.to_string_lossy().into_owned())
+    };
+    assert_eq!(from("one", Some("test.icons.b")).as_deref(), Some("b"));
+    assert_eq!(from("one", None).as_deref(), Some("a"), "first by id");
+    assert_eq!(
+        from("two", Some("test.icons.b")).as_deref(),
+        Some("a"),
+        "missing in b"
+    );
+    assert_eq!(from("nothing", None), None);
 }

@@ -1,0 +1,4 @@
+#!/bin/sh
+# The distribution lives in usr/lib/kumiko: resources/ and plugins/ next to the executable.
+here="$(dirname "$(readlink -f "$0")")"
+exec "$here/usr/lib/kumiko/kumiko" "$@"

@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # staging too: stages merge there (spec v1.1, section 7), and its caches serve their PRs.
+    branches: [main, staging]
   pull_request:
 
 env:
@@ -26,8 +27,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - run: rustup show active-toolchain || rustup toolchain install
+      # rust-cache keys on every installed toolchain; the runner images' own stable changes
+      # (1.99.0 / 1.99.1), which made Linux miss the cache. Only rust-toolchain.toml's remains.
+      - name: Toolchain
+        shell: bash
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup toolchain uninstall stable || true
+      # Saved only on pushes to main and staging: PRs restore those, and saving from every PR
+      # cost minutes (4.5 on Windows) and raced between jobs.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name == 'push' }}
       # GPUI (kumiko-ui) links X11, Wayland, xkbcommon, fontconfig and Vulkan on Linux.
       - name: Install UI build dependencies
         if: runner.os == 'Linux'
@@ -48,8 +59,18 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - run: rustup show active-toolchain || rustup toolchain install
+      # rust-cache keys on every installed toolchain; the runner images' own stable changes
+      # (1.99.0 / 1.99.1), which made Linux miss the cache. Only rust-toolchain.toml's remains.
+      - name: Toolchain
+        shell: bash
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          rustup toolchain uninstall stable || true
+      # Saved only on pushes to main and staging: PRs restore those, and saving from every PR
+      # cost minutes (4.5 on Windows) and raced between jobs.
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name == 'push' }}
       - name: Install UI build dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libx11-xcb-dev

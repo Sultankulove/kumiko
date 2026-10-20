@@ -1,0 +1,16 @@
+# Icons in the style of IntelliJ's New UI (spec v1.1, section 6). The SVG files come from
+# IntelliJ Community, Apache-2.0: https://github.com/JetBrains/intellij-community
+# (platform/icons/src/expui, plugins/terminal/resources/icons/expui); see NOTICE.
+# The UI draws them as masks in the colour of the theme, so one file serves every theme.
+[resource]
+id = "kumiko.icons.new-ui"
+kind = "icons"
+version = "0.1.0"
+name = "New UI"
+
+[icons]
+"toolwindow.project" = "toolwindows/project.svg"
+"toolwindow.commit" = "toolwindows/commit.svg"
+"toolwindow.problems" = "toolwindows/problems.svg"
+"toolwindow.output" = "toolwindows/output.svg"
+"toolwindow.terminal" = "toolwindows/terminal.svg"

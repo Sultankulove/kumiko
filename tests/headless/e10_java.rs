@@ -15,7 +15,7 @@ use kumiko_types::{DocumentId, Position, Range, Uri};
 
 use crate::fixtures;
 
-fn plugin_source(dir: &Path) -> PathBuf {
+pub(crate) fn plugin_source(dir: &Path) -> PathBuf {
     static BINARY: OnceLock<PathBuf> = OnceLock::new();
     let binary = BINARY.get_or_init(|| fixtures::build("kumiko-java", &[], "kumiko-java", ""));
     let root = fixtures::workspace_root().join("plugins/java");
@@ -71,7 +71,7 @@ async fn open(settings: &str) -> Project {
 }
 
 /// Polls `condition` up to `limit` (JDT LS takes its time to import a project).
-async fn until(what: &str, limit: Duration, mut condition: impl AsyncFnMut() -> bool) {
+pub(crate) async fn until(what: &str, limit: Duration, mut condition: impl AsyncFnMut() -> bool) {
     let deadline = tokio::time::Instant::now() + limit;
     while !condition().await {
         assert!(

@@ -5,6 +5,7 @@
     "editor.fontFamily": { "type": "string", "default": "monospace" },
     "editor.tabSize": { "type": "integer", "default": 4, "minimum": 1, "maximum": 16 },
     "workbench.theme": { "type": "string", "default": "kumiko.theme.darcula" },
+    "workbench.iconTheme": { "type": "string", "default": "kumiko.icons.new-ui", "description": "Icon pack (resource of kind `icons`); icons it lacks come from other packs." },
     "workbench.locale": { "type": ["string", "null"], "default": null, "description": "UI language; null follows LANG." },
     "files.eol": { "enum": ["auto", "lf", "crlf"], "default": "auto", "description": "Line endings of new files; existing files keep theirs." },
     "files.exclude": {

@@ -15,6 +15,8 @@ use crate::text::{char_of, position_of};
 
 /// Rows a popup shows before it scrolls.
 const POPUP_ROWS: usize = 12;
+/// Wider popups would cover the project tree when moved to fit the window.
+const POPUP_MAX_WIDTH: f32 = 640.0;
 
 /// A diagnostic of the document, in chars of the current text.
 pub(super) struct Mark {
@@ -503,12 +505,29 @@ impl EditorView {
                                 }
                                 view.accept_completion(cx);
                             }))
-                            .child(div().flex_1().child(item.label.clone()))
-                            .children(
-                                item.detail
-                                    .clone()
-                                    .map(|d| div().text_color(style.gutter_foreground).child(d)),
+                            // The label keeps its width up to a limit; the detail (a type or a
+                            // signature, often long) takes the rest and ends with an ellipsis.
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .max_w(px(POPUP_MAX_WIDTH * 0.65))
+                                    .truncate()
+                                    .child(item.label.clone()),
                             )
+                            .children(item.detail.clone().map(|d| {
+                                // Grey on the selection colour would be unreadable.
+                                let colour = if n == completion.selected {
+                                    style.foreground
+                                } else {
+                                    style.gutter_foreground
+                                };
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .truncate()
+                                    .text_color(colour)
+                                    .child(d)
+                            }))
                     });
                 div().flex().flex_col().children(rows).into_any_element()
             }
@@ -580,6 +599,7 @@ impl EditorView {
                         div()
                             .id("editor-popup")
                             .min_w(px(220.0))
+                            .max_w(px(POPUP_MAX_WIDTH))
                             .max_h(px((style.line_height + 2.0) * POPUP_ROWS as f32 + 4.0))
                             .overflow_hidden()
                             .py_0p5()

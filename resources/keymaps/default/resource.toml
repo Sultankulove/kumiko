@@ -27,6 +27,10 @@ key = "ctrl+p"
 command = "workbench.quickOpen"
 
 [[binding]]
+key = "ctrl+alt+s"
+command = "workbench.openSettings"
+
+[[binding]]
 key = "ctrl+shift+p"
 command = "workbench.showCommands"
 

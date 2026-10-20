@@ -26,6 +26,8 @@ pub enum UiCommand {
     /// Pick a colour theme; set one (`workbench.setTheme [id]`).
     SelectTheme,
     SetTheme(String),
+    /// The Settings window.
+    OpenSettings,
     /// A command of the editor (see `EditorProvider::commands`), for the active editor.
     Editor(String),
     /// Split the editor area, or join it back.
@@ -90,6 +92,7 @@ const COMMANDS: &[(&str, Parse)] = &[
         Ok(UiCommand::PreviousEditor)
     }),
     ("workbench.selectTheme", |_| Ok(UiCommand::SelectTheme)),
+    ("workbench.openSettings", |_| Ok(UiCommand::OpenSettings)),
     ("workbench.setTheme", set_theme),
     ("workbench.fileStructure", |_| {
         Ok(UiCommand::QuickOpen(Mode::Symbols))

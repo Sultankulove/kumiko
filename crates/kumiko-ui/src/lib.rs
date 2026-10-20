@@ -23,6 +23,7 @@ mod menus;
 mod palette;
 mod problems;
 mod quick_open;
+mod settings;
 mod state;
 mod tabs;
 pub mod terminal;

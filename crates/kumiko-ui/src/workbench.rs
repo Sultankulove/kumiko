@@ -46,6 +46,7 @@ mod kits;
 mod language;
 mod plugin_ui;
 mod search;
+mod settings;
 mod tasks;
 mod terminal;
 use crate::tree::{Entry, FileTree, Row};
@@ -84,6 +85,7 @@ enum FocusTarget {
     Project,
     Editor,
     Quick,
+    Settings,
 }
 
 /// A file open in tabs: its document and how it is stored (for the status bar).
@@ -159,6 +161,9 @@ pub struct Workbench {
     /// The open Quick Open popup and its focus.
     quick_open: Option<QuickOpen>,
     quick_focus: FocusHandle,
+    /// The Settings window, while it is open.
+    settings: Option<crate::settings::SettingsDialog>,
+    settings_focus: FocusHandle,
     /// Where the workspace state is saved, once a folder is open.
     state_file: Option<std::path::PathBuf>,
     /// Files opened, most recent first (shown first in Quick Open).
@@ -248,6 +253,8 @@ impl Workbench {
             shown: false,
             quick_open: None,
             quick_focus: cx.focus_handle(),
+            settings: None,
+            settings_focus: cx.focus_handle(),
             state_file: None,
             recent: Vec::new(),
             problems: Vec::new(),
@@ -333,6 +340,7 @@ impl Workbench {
             UiCommand::Reformat => self.reformat(cx),
             UiCommand::RunTask => self.open_tasks(cx),
             UiCommand::ApplyKit => self.open_kits(),
+            UiCommand::OpenSettings => self.open_settings(),
             UiCommand::FindInFiles => self.open_find_in_files(cx),
             UiCommand::StopTasks => self.stop_tasks(),
             UiCommand::SelectTheme => {
@@ -1113,6 +1121,7 @@ impl Workbench {
         self.palette = palette(&self.core);
         self.icons = icons(&self.core);
         self.locale = self.core.locale();
+        self.refresh_settings();
         self.menus = self.build_menus();
         let theme = self.editor_theme();
         for editor in self.editors.values() {
@@ -1797,6 +1806,9 @@ impl Render for Workbench {
                     self.project_focus.focus(window)
                 }
                 FocusTarget::Quick if self.quick_open.is_some() => self.quick_focus.focus(window),
+                FocusTarget::Settings if self.settings.is_some() => {
+                    self.settings_focus.focus(window)
+                }
                 _ => match self.active_editor() {
                     Some(editor) => editor.focus.focus(window),
                     None => self.editor_focus.focus(window),
@@ -1859,6 +1871,9 @@ impl Render for Workbench {
         }
         if let Some(popup) = self.quick_popup(&regions, cx) {
             root = root.child(popup);
+        }
+        if let Some(window) = self.settings_popup(&regions, cx) {
+            root = root.child(window);
         }
         root
     }

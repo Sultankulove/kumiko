@@ -25,7 +25,7 @@ use kumiko_protocol::methods::config::ConfigTarget;
 use kumiko_service_api::{Event, EventSink};
 
 pub use keymap::{Keymap, KeymapSource};
-pub use schema::{PropertySchema, SchemaError};
+pub use schema::{PropertySchema, SchemaError, SettingKind};
 
 const LANGUAGE_TABLE: &str = "language";
 
@@ -74,7 +74,28 @@ struct State {
 /// A layer flattened for lookups.
 struct Flat {
     source: String,
+    layer: Layer,
     values: Map<String, Value>,
+}
+
+/// Where an effective value comes from (the Settings window shows it and resets to it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layer {
+    Default,
+    Kit,
+    User,
+    Workspace,
+}
+
+/// A registered setting with its effective value, outside language overrides.
+#[derive(Debug, Clone)]
+pub struct Setting {
+    pub key: String,
+    /// Who registered the schema: `core` or a plugin id.
+    pub owner: String,
+    pub schema: PropertySchema,
+    pub value: Option<Value>,
+    pub layer: Layer,
 }
 
 impl State {
@@ -99,23 +120,32 @@ impl State {
         let mut layers = vec![
             Flat {
                 source: "defaults".into(),
+                layer: Layer::Default,
                 values: defaults,
             },
             Flat {
                 source: "kit".into(),
+                layer: Layer::Kit,
                 values: self.kit.clone(),
             },
         ];
-        for file in [&self.user, &self.workspace] {
+        for (file, layer) in [
+            (&self.user, Layer::User),
+            (&self.workspace, Layer::Workspace),
+        ] {
             let mut base = file.tree.clone();
             base.remove(LANGUAGE_TABLE);
             layers.push(Flat {
                 source: file_name(file),
+                layer,
                 values: self.flatten(&base),
             });
         }
         if let Some(language) = language {
-            for file in [&self.user, &self.workspace] {
+            for (file, layer) in [
+                (&self.user, Layer::User),
+                (&self.workspace, Layer::Workspace),
+            ] {
                 let tree = file
                     .tree
                     .get(LANGUAGE_TABLE)
@@ -124,6 +154,7 @@ impl State {
                 if let Some(tree) = tree {
                     layers.push(Flat {
                         source: format!("{} [language.{language}]", file_name(file)),
+                        layer,
                         values: self.flatten(tree),
                     });
                 }
@@ -140,11 +171,15 @@ impl State {
     }
 
     fn get(&self, key: &str, language: Option<&str>) -> Option<Value> {
+        self.get_with_layer(key, language).map(|(value, _)| value)
+    }
+
+    fn get_with_layer(&self, key: &str, language: Option<&str>) -> Option<(Value, Layer)> {
         self.layers(language)
             .into_iter()
             .rev()
-            .filter_map(|layer| layer.values.get(key).cloned())
-            .find(|value| self.valid(key, value).is_ok())
+            .filter_map(|flat| Some((flat.values.get(key).cloned()?, flat.layer)))
+            .find(|(value, _)| self.valid(key, value).is_ok())
     }
 
     fn languages(&self) -> BTreeSet<String> {
@@ -356,6 +391,15 @@ impl ConfigService {
             .collect()
     }
 
+    /// The settings file of a target, when there is one.
+    pub fn file(&self, target: ConfigTarget) -> Option<PathBuf> {
+        let state = read(&self.state);
+        match target {
+            ConfigTarget::User => state.user.path.clone(),
+            ConfigTarget::Workspace => state.workspace.path.clone(),
+        }
+    }
+
     /// Re-reads the settings files; returns (and publishes) the changed keys.
     pub fn reload(&self) -> Vec<String> {
         self.changing(|state| {
@@ -367,6 +411,25 @@ impl ConfigService {
     /// Effective value of a setting for an optional language.
     pub fn get(&self, key: &str, language: Option<&str>) -> Option<Value> {
         read(&self.state).get(key, language)
+    }
+
+    /// Every registered setting by key, with its effective value and the layer it comes from.
+    pub fn settings(&self) -> Vec<Setting> {
+        let state = read(&self.state);
+        state
+            .schemas
+            .iter()
+            .map(|(key, (owner, schema))| {
+                let found = state.get_with_layer(key, None);
+                Setting {
+                    key: key.clone(),
+                    owner: owner.clone(),
+                    schema: schema.clone(),
+                    layer: found.as_ref().map_or(Layer::Default, |(_, layer)| *layer),
+                    value: found.map(|(value, _)| value),
+                }
+            })
+            .collect()
     }
 
     /// Effective values under `prefix.`, keyed relative to the prefix.

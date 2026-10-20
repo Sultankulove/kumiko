@@ -15,6 +15,8 @@ const MAIN_MENUS: &[(&str, &str, &[Option<&str>])] = &[
             Some("file.save"),
             Some("file.saveAll"),
             None,
+            Some("workbench.openSettings"),
+            None,
             Some("workbench.quit"),
         ],
     ),

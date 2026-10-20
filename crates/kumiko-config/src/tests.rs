@@ -253,3 +253,60 @@ fn keymap_files_load_into_their_source() {
     assert!(f.config.keymap().bindings().is_empty());
     assert!(f.config.problems().is_empty());
 }
+
+#[test]
+fn settings_list_values_with_their_layer_and_kind() {
+    let f = fixture();
+    f.config
+        .set_kit(Map::from_iter([("editor.tabSize".into(), json!(2))]));
+    write(&f.user, "[editor]\nfontSize = 15\n");
+    write(&f.workspace, "\"files.eol\" = \"crlf\"\n");
+    f.config.reload();
+
+    let settings = f.config.settings();
+    let keys: Vec<&str> = settings.iter().map(|s| s.key.as_str()).collect();
+    assert_eq!(
+        keys,
+        [
+            "editor.fontSize",
+            "editor.tabSize",
+            "files.eol",
+            "files.exclude"
+        ]
+    );
+    let layer = |key: &str| settings.iter().find(|s| s.key == key).unwrap().layer;
+    assert_eq!(layer("editor.fontSize"), Layer::User);
+    assert_eq!(layer("editor.tabSize"), Layer::Kit);
+    assert_eq!(layer("files.eol"), Layer::Workspace);
+    assert_eq!(layer("files.exclude"), Layer::Default);
+    assert_eq!(settings[0].value, Some(json!(15)));
+    assert_eq!(settings[0].owner, "core");
+
+    let kind = |key: &str| {
+        settings
+            .iter()
+            .find(|s| s.key == key)
+            .unwrap()
+            .schema
+            .kind()
+    };
+    assert_eq!(
+        kind("editor.fontSize"),
+        SettingKind::Number {
+            integer: true,
+            minimum: Some(6.0),
+            maximum: None
+        }
+    );
+    assert_eq!(
+        kind("files.eol"),
+        SettingKind::Choice(vec![json!("lf"), json!("crlf")])
+    );
+    assert_eq!(kind("files.exclude"), SettingKind::Structured);
+
+    // A value its schema rejects is not the effective one: the lower layer shows.
+    write(&f.user, "[editor]\nfontSize = 2\n");
+    f.config.reload();
+    let font = f.config.settings().into_iter().next().unwrap();
+    assert_eq!((font.value, font.layer), (Some(json!(14)), Layer::Default));
+}

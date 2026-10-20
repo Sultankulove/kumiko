@@ -31,6 +31,37 @@ impl PropertySchema {
         self.raw.get("description").and_then(Value::as_str)
     }
 
+    /// A display name, when the schema gives one.
+    pub fn title(&self) -> Option<&str> {
+        self.raw.get("title").and_then(Value::as_str)
+    }
+
+    /// What kind of control edits the value.
+    pub fn kind(&self) -> SettingKind {
+        let bound = |name| self.raw.get(name).and_then(Value::as_f64);
+        if let Some(Value::Array(values)) = self.raw.get("enum") {
+            return SettingKind::Choice(values.clone());
+        }
+        let types = types(&self.raw);
+        let has = |t: &str| types.iter().any(|x| x == t);
+        if has("array") || has("object") {
+            SettingKind::Structured
+        } else if has("boolean") {
+            SettingKind::Boolean
+        } else if has("integer") || has("number") {
+            SettingKind::Number {
+                integer: !has("number"),
+                minimum: bound("minimum"),
+                maximum: bound("maximum"),
+            }
+        } else {
+            // Strings, nullable strings and schemas without a type: edited as text.
+            SettingKind::Text {
+                nullable: has("null"),
+            }
+        }
+    }
+
     /// Whether values of this setting are objects, i.e. TOML tables are not flattened.
     pub fn is_object(&self) -> bool {
         types(&self.raw).iter().any(|t| t == "object")
@@ -39,6 +70,25 @@ impl PropertySchema {
     pub fn validate(&self, value: &Value) -> Result<(), String> {
         validate(&self.raw, value)
     }
+}
+
+/// The control a setting needs (Settings window, the `Form` model).
+#[derive(Debug, Clone, PartialEq)]
+pub enum SettingKind {
+    Boolean,
+    Number {
+        integer: bool,
+        minimum: Option<f64>,
+        maximum: Option<f64>,
+    },
+    /// Text; `nullable`: an empty field means `null`.
+    Text {
+        nullable: bool,
+    },
+    /// One of the listed values.
+    Choice(Vec<Value>),
+    /// Arrays and objects: edited in the settings file.
+    Structured,
 }
 
 fn types(schema: &Map<String, Value>) -> Vec<String> {

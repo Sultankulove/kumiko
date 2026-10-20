@@ -1,0 +1,88 @@
+name: Release
+
+# Builds the distribution on both platforms (spec v1.1, section 7.3). A tag `v*` on main
+# publishes a GitHub Release; a pull request that touches packaging and a manual run only
+# upload the artifacts.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "packaging/**"
+      - "tools/xtask/**"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup show active-toolchain || rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Install UI build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libx11-xcb-dev desktop-file-utils
+
+      - name: Linux packages (.tar.gz, AppImage)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cargo xtask dist --archive
+          dist=$(ls -d target/dist/kumiko-*-linux-x86_64)
+          name=$(basename "$dist")
+          mkdir -p out AppDir/usr/lib
+          cp "$dist.tar.gz" out/
+          cp -r "$dist" AppDir/usr/lib/kumiko
+          cp packaging/linux/AppRun AppDir/AppRun
+          cp packaging/linux/kumiko.desktop packaging/linux/kumiko.svg AppDir/
+          curl -sSfL https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage -o appimagetool
+          chmod +x appimagetool
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool AppDir "out/$name.AppImage"
+          cd out && sha256sum * > "$name.sha256"
+
+      - name: Windows packages (.zip, .msi)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo xtask dist
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $dist = Get-Item target/dist/kumiko-*-windows-x86_64
+          $version = $dist.Name -replace '^kumiko-(.+)-windows-x86_64$', '$1'
+          New-Item -ItemType Directory -Force out | Out-Null
+          Compress-Archive -Path $dist.FullName -DestinationPath "out/$($dist.Name).zip"
+          dotnet tool install --global wix --version 5.0.2
+          wix build packaging/windows/kumiko.wxs -arch x64 -d "Version=$version" -d "DistDir=$($dist.FullName)" -o "out/$($dist.Name).msi"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem out -File | Where-Object Extension -in '.zip', '.msi' | ForEach-Object {
+            "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          } | Set-Content -Encoding ascii "out/$($dist.Name).sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kumiko-${{ runner.os }}
+          path: out/*
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          fail_on_unmatched_files: true

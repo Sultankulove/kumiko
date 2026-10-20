@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Kumiko
+Comment=Modular native IDE
+Exec=kumiko %F
+Icon=kumiko
+Categories=Development;IDE;
+Terminal=false

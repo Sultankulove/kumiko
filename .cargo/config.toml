@@ -1,0 +1,3 @@
+[alias]
+# Build tasks in Rust, not shell scripts (ADR-020): `cargo xtask dist`.
+xtask = "run --package xtask --"
